@@ -97,6 +97,11 @@ func open_book() -> void:
 	open_btn.disabled = true
 	if not Game.has_book():
 		Game.bind_book(Game.ch)
+		if Game.ch.has("ui"):
+			Game.ch.ui.book = true
+		if Game.ch.has("journal_ids") and not Game.ch.journal_ids.has("book_received"):
+			Game.ch.journal_ids["book_received"] = true
+			Game.ch.journal.append(GameData.JOURNAL.book_received)
 		Game.save_game()
 	var tw := create_tween()
 	tw.tween_property(cover, "rotation", -0.07, 0.12)
@@ -117,13 +122,13 @@ func _reveal() -> void:
 	for s in p.spells:
 		names.append(GameData.SPELLS[p.el][s.i].name)
 	var soft: String = C.ink_soft.to_html(false)
-	traits.text = "[color=#%s]BINDING[/color]\n[b]%s[/b] · %s\n[color=#%s]%s[/color]\n\n[color=#%s]THICKNESS[/color]\n[b]%s[/b], %d pages\n[color=#%s]%s[/color]\n\n[color=#%s]SPELLS[/color]\n%s" % [
+	traits.text = "[color=#%s]BINDING[/color]\n[b]%s[/b] · %s\n[color=#%s]%s[/color]\n\n[color=#%s]THICKNESS[/color]\n[b]%s[/b]\n[color=#%s]%s[/color]\n\n[color=#%s]SPELLS[/color]\n%s" % [
 		soft, e.name, e.verb, soft, e.passive,
-		soft, t.name, p.pages, soft, t.trade,
+		soft, t.name, soft, t.trade,
 		soft, ", ".join(names),
 	]
 	if int(p.ink) > 0:
-		traits.text += "\n\n[color=#%s]You saved %d ink while bare-handed. Spend it on your spells.[/color]" % [soft, p.ink]
+		traits.text += "\n\n[color=#%s]The ink you gathered bare-handed is waiting. Rest, and write it into your pages.[/color]" % soft
 	traits.visible = true
 	enter_btn.visible = true
 	open_btn.visible = false

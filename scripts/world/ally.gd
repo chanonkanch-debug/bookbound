@@ -30,21 +30,34 @@ func tick(dt: float) -> void:
 	cd -= dt
 	flash = maxf(0.0, flash - dt)
 	if cd <= 0.0:
-		cd = 1.7 if try_cast() else 0.3
+		cd = 2.6 if try_cast() else 0.3
 	queue_redraw()
 
 
+## Mira teaches by example (Phase 3): she prefers a target that would show the player a
+## reaction or secret they haven't found yet (MIRA_TEACH in game_data.gd). She never says so.
 func try_cast() -> bool:
-	var t = w.nearest(position, 300.0)
+	var t = null
+	var best := -INF
+	for e in w.enemies:
+		if e.dead:
+			continue
+		var d: float = position.distance_to(e.position)
+		if d > 300.0:
+			continue
+		var score: float = -d + w.discovery.mira_bonus(e, el)
+		if score > best:
+			best = score
+			t = e
 	if t == null:
 		return false
-	var dmg := 7.0 + 2.0 * int(w.ch.level)
+	var dmg := 12.0 + 3.0 * int(w.ch.level)
 	var st: Dictionary
 	if el == "water":
 		st = {"kind": "bolt", "el": "water", "dmg": dmg, "speed": 480.0, "soak": true, "push": 40.0, "tier": 0}
 	else:
 		st = {"kind": "chain", "el": "lightning", "dmg": dmg, "jumps": 2, "range": 300.0, "tier": 0}
-	w.perform(st, t, "ally", 1.0)
+	w.perform(st, t.position, "ally", 1.0)
 	flash = 0.3
 	w.chapter.on_ally_cast(t)
 	return true

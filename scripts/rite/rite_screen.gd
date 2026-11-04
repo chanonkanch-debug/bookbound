@@ -89,7 +89,7 @@ func _ready() -> void:
 	cover.modulate.a = 0.45
 	right.add_child(cover)
 	right.add_child(_label("THE BOOK CEREMONY", 12, C.ink_soft))
-	right.add_child(_label("Nobody is born with a book. You'll fight with your bare hands until Lv %d, then return to the Hearth, where a book chooses you." % GameData.CEREMONY_LEVEL, 15, C.ink, true))
+	right.add_child(_label("Nobody is born with a book. You'll fight with your bare hands until one is ready for you at the Hearth.", 15, C.ink, true))
 	right.add_child(_label("Which book is up to chance, but books are said to notice how you fight.", 15, C.ink_soft, true))
 
 	saved = Game.load_game()
@@ -97,7 +97,7 @@ func _ready() -> void:
 		var what := "bare hands"
 		if Game.has_book(saved):
 			what = GameData.ELEMENTS[saved.el].name
-		continue_btn.text = "Continue as %s (Lv %d, %s)" % [saved.name, saved.level, what]
+		continue_btn.text = "Continue as %s (%s)" % [saved.name, what]
 		continue_btn.visible = true
 
 

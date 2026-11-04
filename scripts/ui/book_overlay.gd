@@ -75,18 +75,27 @@ func open(awakened_now: bool) -> void:
 	var t: Dictionary = GameData.THICKNESS[ch.thick]
 	var e: Dictionary = GameData.ELEMENTS[ch.el]
 	left.add_child(_label("%s's book" % ch.name, 30, C.ink))
-	left.add_child(_label("%s · %s · %d pages" % [t.name, e.name, ch.pages], 14, C.ink_soft))
+	left.add_child(_label("%s · %s" % [t.name, e.name], 14, C.ink_soft))
 	left.add_child(_label(e.passive, 15, C.ink))
-	for s in ch.spells:
-		left.add_child(_label("•  %s, Lv %d" % [Game.spell_name(s), s.lvl], 15, C.ink))
-	left.add_child(_label("Level %d · %d ink unspent" % [ch.level, ch.ink], 14, C.ink_soft))
+	for i in ch.spells.size():
+		var s: Dictionary = ch.spells[i]
+		var mark := "▸" if i == w.casting.page else "•"
+		left.add_child(_label("%s  %s" % [mark, Game.spell_name(s)], 15, C.ink))
+	if int(ch.ink) > 0:
+		left.add_child(_label("There is ink to write with. Rest.", 14, C.ink_soft))
+	# Margin notes: hidden-chapter hints and spell secrets, once they've appeared.
+	var m: Array = w.all_margins()
+	if not m.is_empty() and ch.ui.get("margins", false):
+		left.add_child(HSeparator.new())
+		for line in m:
+			left.add_child(_label(line, 13, C.gilt))
 
 	var a: Dictionary = ch.aspect
 	if a.awakened:
 		var as_: Dictionary = GameData.ASPECTS[a.id]
 		right.add_child(_label("HIDDEN CHAPTER", 12, C.ink_soft, true))
 		right.add_child(_label(as_.name, 40, C.gilt, true))
-		right.add_child(_label(as_.effect, 15, C.ink, true))
+		right.add_child(_label(String(as_.get("told", as_.effect)), 15, C.ink, true))
 		if awakened_now:
 			right.modulate.a = 0.0
 			right.create_tween().tween_property(right, "modulate:a", 1.0, 1.8)

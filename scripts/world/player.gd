@@ -14,6 +14,7 @@ var heat_t := 0.0
 var hurt_t := 0.0
 var low := false
 var dead_t := 0.0
+var dodge_t := 0.0      # >0 while dashing: strikes miss you
 var steer := Vector2.ZERO   # set by the balance bot (and later by network input) instead of the keyboard
 
 
@@ -56,9 +57,11 @@ func tick(dt: float) -> void:
 	if position.length() > lim:
 		position = position.normalized() * lim
 
+	dodge_t = maxf(0.0, dodge_t - dt)
 	var in_town := position.length() < GameData.TOWN_RADIUS
 	hp = minf(Game.max_hp(), hp + (30.0 if in_town else 1.2) * dt)
-	mana = minf(Game.max_mana(), mana + (25.0 if in_town else 6.0) * dt)
+	var regen: Dictionary = GameData.INK_REGEN
+	mana = minf(Game.max_mana(), mana + float(regen.hearth if in_town else regen.field) * dt)
 	if in_town:
 		w.streak = 0
 	if w.streak_t > 0.0:
@@ -92,8 +95,30 @@ func _draw() -> void:
 		draw_arc(Vector2.ZERO, r + 14.0 + (1.0 - k) * 20.0, 0, TAU, 40, Color(C.gilt, 0.5 * k * pulse), 2.0)
 	if heat > 0:
 		draw_arc(Vector2.ZERO, r + 5.0, 0, TAU, 32, Color(C.fire, 0.25 + heat * 0.1), float(heat))
-	draw_circle(Vector2.ZERO, r, C.danger if hurt_t > 0.0 else el_c)
-	draw_arc(Vector2.ZERO, r, 0, TAU, 32, C.ink, 2.5)
+	var shake := Vector2.ZERO
+	var strain: float = w.casting.strain_t / float(GameData.OVERCAST.strain_time)
+	if strain > 0.0:
+		shake = Vector2(sin(w.time * 47.0), cos(w.time * 39.0)) * 1.5 * strain
+	# Health shows on your body: the ink fades and cracks as you get hurt.
+	var frac: float = clampf(hp / Game.max_hp(), 0.0, 1.0)
+	var body: Color = C.danger if hurt_t > 0.0 else el_c
+	body.a = 0.35 + 0.65 * frac
+	draw_circle(shake, r, body)
+	draw_arc(shake, r, 0, TAU, 32, Color(C.ink, 0.5 + 0.5 * frac), 2.5)
+	var cracks := int((1.0 - frac) * 7.0)
+	for i in cracks:
+		var a0 := i * 2.6 + 1.1
+		var mid: Vector2 = shake + Vector2.from_angle(a0) * r * 0.55
+		draw_polyline(PackedVector2Array([shake + Vector2.from_angle(a0 + 0.5) * r * 0.15, mid, shake + Vector2.from_angle(a0 - 0.25) * r]), Color(C.ink, 0.7), 1.2)
+	if strain > 0.0:
+		# Overcast strain: cracks across the body and ink dripping off it.
+		for i in 3:
+			var a0 := i * 2.1 + 0.4
+			draw_line(shake + Vector2.from_angle(a0) * r * 0.2, shake + Vector2.from_angle(a0 + 0.3) * r, Color(C.danger, strain), 1.5)
+			var drip := fmod(w.time * 20.0 + i * 7.0, 14.0)
+			draw_circle(Vector2(-6 + i * 6, r + drip), 1.6, Color(C.ink, strain * (1.0 - drip / 14.0)))
+	if dodge_t > 0.0:
+		draw_arc(Vector2.ZERO, r + 4.0, 0, TAU, 24, Color(C.paper, 0.8), 2.0)
 	if bound:
 		draw_rect(Rect2(11, -6, 9, 12), C.ink)       # your book
 		draw_rect(Rect2(11, -6, 2, 12), el_c)

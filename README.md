@@ -28,12 +28,19 @@ The first time you open it, Godot spends a few seconds importing. That's normal.
 | Action | Keys |
 |---|---|
 | Move | WASD or arrow keys, or hold the left mouse button on the map |
-| Cast spells | 1, 2, 3 (aims at the nearest enemy) |
-| Bare hands, before your book | 1 Jab, 2 Shove, 3 Sidestep |
-| Hidden spell (if you unlock it) | 4 |
+| Read (cast) | Hold Space or the right mouse button, release to cast. Aims at the mouse (or where you face) |
+| Turn the page | 1, 2, 3 to go to a page, Q / E or the mouse wheel for one page back / forward |
+| Bare hands, before your book | The same keys: 1 Jab, 2 Shove, 3 Sidestep, then hold Space |
+| Hidden spell (if you unlock it) | Hold 4 |
 | Open your book | B (Esc or B to close) |
+| Rest (writes your levels) | Hold R in a safe spot, or press R once at a campfire |
+| Journal / map, once you have them | J / M |
 | Designer view (spoilers) | F1 |
 | Screenshot | F12 |
+
+The screen starts empty on purpose: things appear as you need them. Levels are only written when you rest.
+Casting takes time now: hold to read, release too early and it fizzles, hold longer to charge it.
+See `docs/DESIGN_NOTES.md` for every rule and number.
 
 ---
 
@@ -45,7 +52,7 @@ Open `scripts/data/game_data.gd` in Godot (double-click it in the FileSystem pan
 - Find `"Ember Bolt"` and change `"dmg": 14.0` to `"dmg": 40.0`.
 - Change `INK_PER_LEVEL := 2` to `5`.
 - Change the `"chance"` values under `THICKNESS` to make thin books rarer.
-- Change `CEREMONY_LEVEL := 5` to `2` to get your book almost straight away.
+- Change `CEREMONY_LEVEL := 5` to `2` to get your book almost straight away (rest in the Hearth to receive it).
 - Change `"strength"` under `LEAN` to `0.0` to make the book fully random again, or `300.0` to make
   your fighting style almost decide it.
 
@@ -64,14 +71,21 @@ scripts/
   main.gd                  Switches between creation, the world and the ceremony; also the self-test
   dev/balance.gd           The balance bot (see below)
   rite/rite_screen.gd      Character creation (name and background, bare hands)
-  rite/ceremony_screen.gd  The Book Ceremony: the book reveal at Lv 3
+  rite/ceremony_screen.gd  The Book Ceremony: the book reveal (first Hearth rest at Lv 5)
   world/world.gd           The field: spawning, spells, damage, element combos, drawing effects
   world/player.gd          You: movement, healing at the Hearth
   world/enemy.gd           Ink monsters: wander, chase, bite
-  world/ally.gd            Mira, the AI stand-in for a second player
+  world/ally.gd            Mira, the AI stand-in for a second player (she quietly shows you things)
+  world/casting.gd         Casting by reading: hold, release, page turns, overcast, fizzles
+  world/terrain.gd         Ground patches that react to elements: grass, puddles, stones, open ground
+  world/discovery.gd       What you've learned: monster affinities, terrain, spell secrets
   world/hidden_chapter.gd  ★ The secret: progress, margin hints, awakening
   ui/hud.gd                Side panel, spell buttons, journal, designer view
   ui/book_overlay.gd       The open book you see when pressing B
+  ui/designer_panel.gd     F1: every number, plus everything found and not yet found
+  ui/journal_overlay.gd    The journal (J) and bestiary
+  ui/rest_overlay.gd       The page you write levels into while resting
+  ui/map_overlay.gd        The hand-drawn map (M), once you've found it
   ui/book_cover.gd         Draws a book cover (used by both rite screens)
   ui/ui_theme.gd           Colours and button styles
   util/ink.gd              Drawing helpers for the ink-blob look
@@ -103,7 +117,7 @@ From a terminal you can run the automatic smoke test, which plays for a few seco
 fights bare-handed, attends the Book Ceremony, uses every spell, awakens a hidden chapter, and quits:
 
 ```
-godot --path . -- --autotest
+godot --headless --path . -- --autotest
 ```
 
 If it prints `Autotest finished`, the game logic works end to end.
