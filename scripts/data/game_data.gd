@@ -6,6 +6,7 @@ const TOWN_RADIUS := 160.0        # The Hearth: safe zone in the middle of the m
 const WORLD_RADIUS := 1500.0      # Edge of the world
 const INK_PER_LEVEL := 2          # Ink you get each level, spent to grow spells
 const MAX_ENEMIES_NEARBY := 16
+const CEREMONY_LEVEL := 3         # Level at which the Book Ceremony opens (walk into the Hearth)
 
 const COLORS := {
 	"paper": Color("e7eae1"),
@@ -17,6 +18,7 @@ const COLORS := {
 	"danger": Color("b0271f"),
 	"good": Color("2d7a4c"),
 	"on_el": Color("fbfaf4"),
+	"none": Color("5b6476"),      # bare hands, before you have a book
 	"fire": Color("c8471f"),
 	"water": Color("2669b8"),
 	"earth": Color("83602e"),
@@ -83,6 +85,45 @@ const SPELLS := {
 
 const KIND_LABEL := {
 	"bolt": "projectile", "nova": "burst", "zone": "zone", "dash": "dash", "chain": "chain",
+}
+
+# ---------------------------------------------------------------- Bare hands
+# Everyone starts with no book. These are the moves you fight with until the ceremony.
+# Damage grows 15% per level. "life" is how long a bolt flies (short = melee reach).
+# "move" tells the world which leaning rule the hit counts for (see LEAN below).
+const BARE_HANDS := [
+	{"name": "Jab", "move": "jab", "kind": "bolt", "label": "punch", "dmg": 9.0, "cd": 0.4, "mana": 0.0, "speed": 520.0, "life": 0.13},
+	{"name": "Shove", "move": "shove", "kind": "nova", "dmg": 6.0, "cd": 2.4, "mana": 8.0, "radius": 75.0, "push": 170.0},
+	{"name": "Sidestep", "move": "sidestep", "kind": "dash", "dmg": 4.0, "cd": 1.6, "mana": 6.0, "dash_len": 130.0},
+]
+const BARE_DMG_PER_LEVEL := 0.15
+
+# ---------------------------------------------------------------- Leaning (how you fought before the ceremony)
+# While bare-handed, each fighting style quietly earns points toward an element:
+#   fire       Escalate: a Jab lands on the SAME enemy within combo_window of your last hit
+#   lightning  Chain:    a Jab lands on a DIFFERENT enemy within combo_window of your last hit
+#   water      Redirect: each enemy hit by Shove
+#   wind       Move:     each Sidestep used with an enemy within dash_near
+#   earth      Persist:  any hit landed after standing still for planted_time seconds
+# At the ceremony each element's weight is:
+#   1 + background bonus + strength * (that element's points / all points)
+# With strength 6, someone who only played one style gets that element about 60% of the time.
+# Set strength to 0 to make the book fully random again.
+const LEAN := {
+	"strength": 6.0,
+	"combo_window": 1.2,
+	"planted_time": 1.0,
+	"dash_near": 250.0,
+}
+
+# One vague journal line per element, shown at level-ups before the ceremony for
+# whichever element you lean toward most. Never show the numbers to players.
+const LEAN_HINTS := {
+	"fire": "Your fists remember the heat of a long combo.",
+	"water": "The way you push them back feels like a tide.",
+	"earth": "You stood your ground. The ground noticed.",
+	"wind": "Your feet are quicker than your hands. Something likes that.",
+	"lightning": "You jump from foe to foe like a spark looking for a path.",
 }
 
 # ---------------------------------------------------------------- Backgrounds

@@ -1,6 +1,9 @@
 # Bookbound
 
-Every mage is born holding a grimoire. It decides how you fight, never how strong you are.
+Every mage is bound to a grimoire. It decides how you fight, never how strong you are.
+
+You start with bare hands. At **Lv 3** you return to the Hearth for the **Book Ceremony**, where a
+random book chooses you. How you fought before the ceremony quietly tilts which element you get.
 
 This is milestone 1: a single-player version of the browser prototype, built in Godot 4.
 It is set up so co-op multiplayer can be added next.
@@ -23,6 +26,7 @@ The first time you open it, Godot spends a few seconds importing. That's normal.
 |---|---|
 | Move | WASD or arrow keys, or hold the left mouse button on the map |
 | Cast spells | 1, 2, 3 (aims at the nearest enemy) |
+| Bare hands, before your book | 1 Jab, 2 Shove, 3 Sidestep |
 | Hidden spell (if you unlock it) | 4 |
 | Open your book | B (Esc or B to close) |
 | Designer view (spoilers) | F1 |
@@ -38,6 +42,9 @@ Open `scripts/data/game_data.gd` in Godot (double-click it in the FileSystem pan
 - Find `"Ember Bolt"` and change `"dmg": 14.0` to `"dmg": 40.0`.
 - Change `INK_PER_LEVEL := 2` to `5`.
 - Change the `"chance"` values under `THICKNESS` to make thin books rarer.
+- Change `CEREMONY_LEVEL := 3` to `1` to get your book almost straight away.
+- Change `"strength"` under `LEAN` to `0.0` to make the book fully random again, or `20.0` to make
+  your early fighting style almost decide it.
 
 Press F5 again and play. That's the whole loop: change, play, repeat.
 
@@ -50,9 +57,10 @@ project.godot              Project settings (window size, which scripts load fir
 scenes/main.tscn           The starting scene. It only holds main.gd.
 scripts/
   data/game_data.gd        ★ All numbers and text: elements, spells, books, monsters, hidden chapters
-  game.gd                  Rolls new books, works out spell stats, saves and loads
-  main.gd                  Switches between the Book Rite and the world; also the self-test
-  rite/rite_screen.gd      Character creation and the book reveal
+  game.gd                  Rolls books (with leaning), works out spell stats, saves and loads
+  main.gd                  Switches between creation, the world and the ceremony; also the self-test
+  rite/rite_screen.gd      Character creation (name and background, bare hands)
+  rite/ceremony_screen.gd  The Book Ceremony: the book reveal at Lv 3
   world/world.gd           The field: spawning, spells, damage, element combos, drawing effects
   world/player.gd          You: movement, healing at the Hearth
   world/enemy.gd           Ink monsters: wander, chase, bite
@@ -60,6 +68,7 @@ scripts/
   world/hidden_chapter.gd  ★ The secret: progress, margin hints, awakening
   ui/hud.gd                Side panel, spell buttons, journal, designer view
   ui/book_overlay.gd       The open book you see when pressing B
+  ui/book_cover.gd         Draws a book cover (used by both rite screens)
   ui/ui_theme.gd           Colours and button styles
   util/ink.gd              Drawing helpers for the ink-blob look
 ```
@@ -87,7 +96,7 @@ for good. The `.gitignore` file is already set up.
 ### Self-test
 
 From a terminal you can run the automatic smoke test, which plays for a few seconds,
-uses every spell, awakens a hidden chapter, and quits:
+fights bare-handed, attends the Book Ceremony, uses every spell, awakens a hidden chapter, and quits:
 
 ```
 godot --path . -- --autotest
@@ -109,5 +118,7 @@ If it prints `Autotest finished`, the game logic works end to end.
 ### Design rules we're keeping
 
 - The book never changes how strong you are, only how you play.
+- Nobody picks their book. It's random at the ceremony, tilted by background and by how you fought
+  bare-handed. Players never see the leaning numbers (only the F1 designer view does).
 - Every book has a hidden chapter. Players must find it; the game never tells them it exists.
 - Hidden chapter details (`ASPECTS` in game_data.gd, and hidden_chapter.gd) move to the server in milestone 4 so they can't be datamined.

@@ -34,11 +34,25 @@ func _setup_input() -> void:
 
 # ---------------------------------------------------------------- Rolling a book
 
-func roll_element(bg: String) -> String:
+## Chance weight per element: 1 each, plus background bonus, plus how you
+## fought before the ceremony (see LEAN in game_data.gd).
+func element_weights(bg: String, lean: Dictionary = {}) -> Dictionary:
 	var w := {"fire": 1.0, "water": 1.0, "earth": 1.0, "wind": 1.0, "lightning": 1.0}
 	var bonus: Dictionary = GameData.BACKGROUNDS[bg].weights
 	for k in bonus:
 		w[k] += float(bonus[k])
+	var lean_total := 0.0
+	for k in lean:
+		lean_total += float(lean[k])
+	if lean_total > 0.0:
+		for k in lean:
+			if w.has(k):
+				w[k] += float(GameData.LEAN.strength) * float(lean[k]) / lean_total
+	return w
+
+
+func roll_element(bg: String, lean: Dictionary = {}) -> String:
+	var w := element_weights(bg, lean)
 	var total := 0.0
 	for k in w:
 		total += w[k]
@@ -60,8 +74,36 @@ func roll_thickness() -> String:
 	return "medium"
 
 
+## A fresh character with bare hands and no book yet.
 func new_character(char_name: String, bg: String) -> Dictionary:
-	var el := roll_element(bg)
+	return {
+		"name": char_name if char_name != "" else "Arin", "bg": bg,
+		"el": "", "thick": "", "pages": 0, "spells": [],
+		"ink": 0, "level": 1, "xp": 0,
+		"aspect": {"id": "", "progress": 0, "stage": 0, "awakened": false, "margins": [], "need": 0, "streak": 0},
+		"lean": {"fire": 0.0, "water": 0.0, "earth": 0.0, "wind": 0.0, "lightning": 0.0},
+	}
+
+
+func has_book(c: Dictionary = ch) -> bool:
+	return String(c.get("el", "")) != ""
+
+
+## The element this character has leaned toward most so far ("" if none yet).
+func top_lean(c: Dictionary = ch) -> String:
+	var best := ""
+	var bv := 0.0
+	var lean: Dictionary = c.get("lean", {})
+	for k in lean:
+		if float(lean[k]) > bv:
+			bv = float(lean[k])
+			best = k
+	return best
+
+
+## The Book Ceremony: rolls a book (weighted by background and leaning) into `c`.
+func bind_book(c: Dictionary) -> void:
+	var el := roll_element(c.bg, c.get("lean", {}))
 	var thick := roll_thickness()
 	var t: Dictionary = GameData.THICKNESS[thick]
 	var spell_idx: Array = [0]
@@ -78,11 +120,11 @@ func new_character(char_name: String, bg: String) -> Dictionary:
 		"id": aspect_id, "progress": 0, "stage": 0, "awakened": false, "margins": [],
 		"need": randi_range(need_range[0], need_range[1]), "streak": randi_range(8, 12),
 	}
-	return {
-		"name": char_name if char_name != "" else "Arin", "bg": bg, "el": el, "thick": thick,
-		"pages": randi_range(t.pages[0], t.pages[1]), "spells": spells,
-		"ink": 0, "level": 1, "xp": 0, "aspect": aspect,
-	}
+	c.el = el
+	c.thick = thick
+	c.pages = randi_range(t.pages[0], t.pages[1])
+	c.spells = spells
+	c.aspect = aspect
 
 
 # ---------------------------------------------------------------- Stats
@@ -101,6 +143,15 @@ func max_mana() -> int:
 
 func max_spell_level() -> int:
 	return int(GameData.THICKNESS[ch.thick].max_level)
+
+
+## Final numbers for bare-hands move i (before the ceremony).
+func bare_stats(i: int) -> Dictionary:
+	var st: Dictionary = GameData.BARE_HANDS[i].duplicate()
+	st.el = "none"
+	st.tier = 0
+	st.dmg = float(st.dmg) * (1.0 + GameData.BARE_DMG_PER_LEVEL * (int(ch.level) - 1))
+	return st
 
 
 ## Final numbers for one spell slot after level, evolution tier and book thickness.
@@ -142,7 +193,7 @@ func load_game() -> Dictionary:
 	if f == null:
 		return {}
 	var d = JSON.parse_string(f.get_as_text())
-	if typeof(d) != TYPE_DICTIONARY or not d.has("el"):
+	if typeof(d) != TYPE_DICTIONARY or not d.has("el") or not d.has("aspect"):
 		return {}
 	# JSON turns every number into a float; turn the counters back into ints.
 	for k in ["pages", "ink", "level", "xp"]:
