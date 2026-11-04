@@ -34,7 +34,7 @@ func _init(world) -> void:
 
 func page_count() -> int:
 	if not Game.has_book():
-		return GameData.BARE_HANDS.size()
+		return Game.bare_moves().size()
 	return w.ch.spells.size()
 
 
@@ -124,9 +124,9 @@ func tick(dt: float, held: bool, want_slot := -1) -> void:
 
 
 func begin(i: int) -> void:
-	if i == 3 and not w.last_page_ready():
+	if i == 3 and Game.has_book() and not w.last_page_ready():
 		return
-	if i != 3 and i >= page_count():
+	if (i != 3 or not Game.has_book()) and i >= page_count():
 		return
 	armed = false
 	st = stats_for(i)

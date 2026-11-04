@@ -47,6 +47,7 @@ var enraged_t := 0.0         # Phase 3: an enraging element makes it faster for 
 var enrage_speed := 1.0
 var crash_t := 0.0           # Undertow secret: thrown, and will crash into the next one it touches
 var crash_dmg := 0.0
+var crash_kind := ""         # "undertow" (spell secret) or "tangle" (hand secret)
 var split_done := false
 
 
@@ -93,7 +94,7 @@ func tick(dt: float) -> void:
 	enraged_t -= dt
 	crash_t -= dt
 	var p = w.player
-	var to_p: Vector2 = p.position - position
+	var to_p: Vector2 = w.lure_for(self) - position
 	var d := to_p.length()
 	var target_alive: bool = p.dead_t <= 0.0
 	if d < 330.0 and target_alive:

@@ -45,9 +45,12 @@ class Dock extends Control:
 		var cs = w.casting
 		var c := Vector2(size.x / 2.0, size.y - 46.0)
 		if not Game.has_book():
-			# Three marks: a fist (Jab), an open palm (Shove), a foot (Sidestep).
-			for i in 3:
-				var p := c + Vector2((i - 1) * 46.0, 0)
+			# One mark per move: a fist (Jab), an open palm (Shove), a foot (Sidestep),
+			# then moves learned from monsters. Small dots under a mark show how far it has grown.
+			var moves: Array = Game.bare_moves()
+			var n: int = moves.size()
+			for i in n:
+				var p := c + Vector2((i - (n - 1) / 2.0) * 46.0, 0)
 				var open: bool = i == (cs.turn_target if cs.turning() else cs.page)
 				var col := Color(C.ink, 0.9 if open else 0.3)
 				draw_circle(p, 17.0, Color(C.paper, 0.75 if open else 0.4))
@@ -62,6 +65,19 @@ class Dock extends Control:
 					2:
 						draw_line(p + Vector2(-8, 6), p + Vector2(8, 6), col, 3.0)
 						draw_line(p + Vector2(-8, 6), p + Vector2(-6, -7), col, 3.0)
+					_:
+						match String(moves[i].move):
+							"flank":   # a curve around a dot
+								draw_circle(p + Vector2(3, 0), 3.0, col)
+								draw_arc(p + Vector2(3, 0), 9.0, PI * 0.6, PI * 1.9, 12, col, 2.0)
+							"rush":    # a heavy arrow
+								draw_line(p + Vector2(-9, 0), p + Vector2(7, 0), col, 4.0)
+								draw_colored_polygon(PackedVector2Array([p + Vector2(10, 0), p + Vector2(3, -6), p + Vector2(3, 6)]), col)
+							"brace":   # a shoulder turned to the blow
+								draw_arc(p + Vector2(-3, 0), 9.0, -1.1, 1.1, 12, col, 4.0)
+				var grown: int = w.hands.tier(String(moves[i].move))
+				for k in grown:
+					draw_circle(p + Vector2((k - (grown - 1) / 2.0) * 7.0, 24.0), 2.2, col)
 			return
 		# The open book. The current page's lines are as dark as your casting ink is full.
 		var ink_f: float = clampf(w.player.mana / Game.max_mana(), 0.0, 1.0)

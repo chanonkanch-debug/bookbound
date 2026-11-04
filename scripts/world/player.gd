@@ -123,5 +123,16 @@ func _draw() -> void:
 		draw_rect(Rect2(11, -6, 9, 12), C.ink)       # your book
 		draw_rect(Rect2(11, -6, 2, 12), el_c)
 	else:
-		draw_circle(facing * (r + 5.0), 4.0, C.ink)  # a bare fist
+		# A bare fist, tinted toward the element your fighting leans to.
+		var fist: Color = C.ink
+		var tint: Color = w.hands.tint()
+		if tint.a > 0.0:
+			fist = C.ink.lerp(Color(tint, 1.0), tint.a)
+			draw_circle(facing * (r + 5.0), 5.5 + 1.5 * tint.a, Color(tint, 0.25 * tint.a))
+		draw_circle(facing * (r + 5.0), 4.0, fist)
+		if w.brace_t > 0.0:
+			# Brace: a thick stroke on the side you're guarding, like a Knight's.
+			var a0: float = w.brace_dir.angle()
+			var arc: float = float(GameData.LEARNED_MOVES.brace.brace_arc)
+			draw_arc(Vector2.ZERO, r + 7.0, a0 - arc / 2.0, a0 + arc / 2.0, 16, Color(C.ink, minf(1.0, w.brace_t * 2.0)), 4.0)
 	Ink.text_c(self, Vector2(0, r + 16), w.ch.name, 13, C.ink)

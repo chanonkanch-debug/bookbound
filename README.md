@@ -30,7 +30,7 @@ The first time you open it, Godot spends a few seconds importing. That's normal.
 | Move | WASD or arrow keys, or hold the left mouse button on the map |
 | Read (cast) | Hold Space or the right mouse button, release to cast. Aims at the mouse (or where you face) |
 | Turn the page | 1, 2, 3 to go to a page, Q / E or the mouse wheel for one page back / forward |
-| Bare hands, before your book | The same keys: 1 Jab, 2 Shove, 3 Sidestep, then hold Space |
+| Bare hands, before your book | The same keys: 1 Jab, 2 Shove, 3 Sidestep, then hold Space. Moves you learn from monsters go on 4, 5, 6 |
 | Hidden spell (if you unlock it) | Hold 4 |
 | Open your book | B (Esc or B to close) |
 | Rest (writes your levels) | Hold R in a safe spot, or press R once at a campfire |
@@ -79,6 +79,7 @@ scripts/
   world/casting.gd         Casting by reading: hold, release, page turns, overcast, fizzles
   world/terrain.gd         Ground patches that react to elements: grass, puddles, stones, open ground
   world/discovery.gd       What you've learned: monster affinities, terrain, spell secrets
+  world/hands.gd           Bare hands that grow: moves learned from monsters, growth, hand secrets
   world/hidden_chapter.gd  ★ The secret: progress, margin hints, awakening
   ui/hud.gd                Side panel, spell buttons, journal, designer view
   ui/book_overlay.gd       The open book you see when pressing B

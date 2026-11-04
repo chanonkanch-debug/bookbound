@@ -16,6 +16,7 @@ const HiddenChapter := preload("res://scripts/world/hidden_chapter.gd")
 const Casting := preload("res://scripts/world/casting.gd")
 const Terrain := preload("res://scripts/world/terrain.gd")
 const Discovery := preload("res://scripts/world/discovery.gd")
+const Hands := preload("res://scripts/world/hands.gd")
 const HudScript := preload("res://scripts/ui/hud.gd")
 const BookScript := preload("res://scripts/ui/book_overlay.gd")
 const DesignerScript := preload("res://scripts/ui/designer_panel.gd")
@@ -40,6 +41,7 @@ var chapter
 var casting
 var terrain
 var discovery
+var hands
 var hud
 var book
 var designer
@@ -95,6 +97,16 @@ var action_hits := 0        # enemies caught by the current Shove or Sidestep
 var chased := false         # an enemy is chasing you (wind signals and stance)
 var last_pos := Vector2.ZERO
 var kite_dist := 0.0
+# Bare hands growth (see hands.gd)
+var last_move := ""         # the last bare-hands move you used
+var last_move_t := -99.0
+var flank_target = null     # the monster a Flank Step is circling
+var clean_id := 0           # the monster you're landing clean Jabs on ("untouched" secret)
+var clean_n := 0
+var brace_t := 0.0          # Brace: blows from the front are turned aside
+var brace_dir := Vector2.RIGHT
+var decoy_t := 0.0          # Sidestep decoy: monsters chase this instead of you
+var decoy_p := Vector2.ZERO
 
 
 func _ready() -> void:
@@ -133,6 +145,7 @@ func _ready() -> void:
 	casting = Casting.new(self)
 	terrain = Terrain.new()
 	discovery = Discovery.new(self)
+	hands = Hands.new(self)
 	hud = HudScript.new()
 	hud.w = self
 	add_child(hud)
@@ -201,12 +214,19 @@ func _process(delta: float) -> void:
 		for i in 3:
 			if Input.is_action_just_pressed("page_%d" % (i + 1)):
 				casting.turn_to(i)
+		if not Game.has_book():
+			# Learned moves sit on keys 4 to 6 (4 is the Last Page once you have a book).
+			if Input.is_action_just_pressed("cast_4"):
+				casting.turn_to(3)
+			for i in [4, 5]:
+				if Input.is_action_just_pressed("page_%d" % (i + 1)):
+					casting.turn_to(i)
 		if Input.is_action_just_pressed("page_prev"):
 			casting.turn_by(-1)
 		if Input.is_action_just_pressed("page_next"):
 			casting.turn_by(1)
 		read_held = Input.is_action_pressed("read")
-		last_page_held = Input.is_action_pressed("cast_4")
+		last_page_held = Input.is_action_pressed("cast_4") and Game.has_book()
 		_update(dt)
 	under.queue_redraw()
 	over.queue_redraw()
@@ -223,6 +243,8 @@ func _update(dt: float) -> void:
 		pointer_down = false
 
 	player.tick(dt)
+	brace_t = maxf(0.0, brace_t - dt)
+	decoy_t = maxf(0.0, decoy_t - dt)
 	casting.tick(dt, (read_held or last_page_held) and not resting, 3 if last_page_held else -1)
 	if not Game.has_book():
 		_track_movement()
@@ -424,7 +446,11 @@ func hit(e, base: float, el: String, src: String, move := "") -> void:
 	if e.dead:
 		return
 	var m := 1.0
+	var force_stagger := 0.0
 	if move != "" and src == "player":
+		var hm: Array = _hand_hit(e, move, base)
+		m *= float(hm[0])
+		force_stagger = float(hm[1])
 		_track_hit(e, move)
 		if player.still >= float(GameData.LEAN.planted_time):
 			m *= 1.0 + float(GameData.STANCES.planted_dmg)
@@ -464,9 +490,13 @@ func hit(e, base: float, el: String, src: String, move := "") -> void:
 	var dmg := maxi(1, roundi(base * m * randf_range(0.9, 1.1)))
 	e.hp -= dmg
 	e.flash = 0.12
-	if dmg >= e.max_hp * float(GameData.MONSTERS.interrupt_frac):
+	if dmg >= e.max_hp * float(GameData.MONSTERS.interrupt_frac) or force_stagger > 0.0:
 		if e.interrupt() and src == "player":
 			journal("first_interrupt")
+			hands.lesson(e)
+	if force_stagger > 0.0 and not e.dead:
+		e.state = "stagger"
+		e.state_t = maxf(e.state_t if e.state == "stagger" else 0.0, force_stagger)
 	e.aggro = true
 	if src == "ally":
 		e.ally_hit = float(GameData.CHAPTER_TUNING.echo_window)
@@ -605,17 +635,38 @@ func gain_xp(n: int) -> void:
 func enemy_strike(e) -> void:
 	if player.dead_t > 0.0:
 		return
+	if decoy_t > 0.0 and e.position.distance_to(decoy_p) < e.position.distance_to(player.position):
+		# It bit the ink you left behind.
+		decoy_t = 0.0
+		ring(decoy_p, 6, 26, 0.3, C.ink_soft, 1.5)
+		hands.lesson(e)
+		return
 	if player.dodge_t > 0.0:
 		ring(player.position, 6, 30, 0.3, C.ink_soft, 1.5)
 		journal("first_dodge")
+		hands.lesson(e)
+		if last_move == "sidestep":
+			hands.use("sidestep")
 		return
 	e.bit_player = true
-	hurt(e.dmg)
+	var d: float = e.dmg
+	if brace_t > 0.0:
+		var B: Dictionary = GameData.LEARNED_MOVES.brace
+		var from: Vector2 = (e.position - player.position).normalized()
+		if absf(wrapf(from.angle() - brace_dir.angle(), -PI, PI)) <= float(B.brace_arc) / 2.0:
+			d *= 1.0 - float(B.brace_guard)
+			e.state = "stagger"
+			e.state_t = float(B.brace_stagger)
+			e.knock += from * 160.0
+			ring(player.position + brace_dir * 18.0, 6, 30, 0.3, C.ink, 2.5)
+			hands.lesson(e)
+	hurt(d)
 
 
 func hurt(d: float) -> void:
 	if player.dead_t > 0.0:
 		return
+	clean_n = 0
 	if player.still >= float(GameData.LEAN.planted_time) and not Game.has_book():
 		signal_lean("absorb", d / 10.0)
 		d *= 1.0 - float(GameData.STANCES.planted_guard)
@@ -796,6 +847,7 @@ func perform(st_in: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 						_push_soak_slow(e, st, c)
 						if crash:
 							e.crash_t = float(GameData.SECRETS["Undertow"].window)
+							e.crash_kind = "undertow"
 							e.crash_dmg = dmg * float(GameData.SECRETS["Undertow"].dmg)
 				if st.el == "fire":
 					ignite_at(c, r)
@@ -858,7 +910,7 @@ func perform(st_in: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 				var closest := Geometry2D.get_closest_point_to_segment(e.position, origin, end_p)
 				if e.position.distance_to(closest) < width + e.r:
 					hit(e, dmg, st.el, src, String(st.get("move", "")))
-					_push_soak_slow(e, {"push": 80.0}, closest)
+					_push_soak_slow(e, {"push": float(st.get("push", 80.0))}, closest)
 					through += 1
 			chains.append({"a": origin, "b": end_p, "t": 0.25, "col": col, "wide": true})
 			o.position = end_p
@@ -976,8 +1028,25 @@ func _storm_fork(first, z: Dictionary) -> void:
 ## Undertow secret: an enemy thrown into another one makes both reel.
 func _crash(a, b) -> void:
 	var dmg: float = maxf(a.crash_dmg if a.crash_t > 0.0 else 0.0, b.crash_dmg if b.crash_t > 0.0 else 0.0)
+	# A tangle needs one thrown monster meeting one that wasn't thrown with it.
+	var ta: bool = a.crash_t > 0.0 and a.crash_kind == "tangle"
+	var tb: bool = b.crash_t > 0.0 and b.crash_kind == "tangle"
+	if ta and tb:
+		return
+	var tangle: bool = ta or tb
 	a.crash_t = 0.0
 	b.crash_t = 0.0
+	if tangle:
+		# Hand secret: a Shove threw one monster into another.
+		var T: Dictionary = GameData.HAND_SECRETS.tangle
+		for e in [a, b]:
+			hit(e, float(T.dmg), "none", "player")
+			if not e.dead:
+				e.state = "stagger"
+				e.state_t = float(T.stagger)
+		ring((a.position + b.position) / 2.0, 6, 34, 0.4, C.ink, 2.5)
+		hands.secret("tangle")
+		return
 	for e in [a, b]:
 		e.state = "stagger"
 		e.state_t = float(GameData.SECRETS["Undertow"].stagger)
@@ -1063,10 +1132,37 @@ func _cast_bare(st: Dictionary, aim: Vector2) -> void:
 		var tgt = chain_target(player.position, aim, 90.0)
 		if tgt != null:
 			aim = tgt.position
-	action_hits = 0
-	perform(st, aim, "player", 1.0)
-	if action_hits >= 2:
-		signal_lean("multi", action_hits - 1)
+	st = _grow_move(st)
+	var from: Vector2 = player.position
+	flank_target = null
+	if st.move == "flank":
+		# Circle to the far side of the nearest monster near the aim.
+		var tgt = chain_target(player.position, aim, float(st.reach))
+		if tgt != null:
+			var away: Vector2 = (tgt.position - player.position).normalized()
+			aim = tgt.position + away * (tgt.r + player.r + 16.0)
+			st.dash_len = player.position.distance_to(aim)
+			flank_target = tgt
+	if st.move == "brace":
+		brace_t = float(st.brace_time)
+		brace_dir = (aim - player.position).normalized() if aim.distance_to(player.position) > 1.0 else player.facing
+		player.facing = brace_dir
+		player.still = float(GameData.LEAN.planted_time)   # bracing is standing your ground
+	else:
+		action_hits = 0
+		perform(st, aim, "player", 1.0)
+		if action_hits >= 2:
+			signal_lean("multi", action_hits - 1)
+	if st.move == "shove" and action_hits >= 1:
+		hands.use("shove")
+	if st.move == "sidestep":
+		if action_hits >= 1:
+			hands.use("sidestep")
+		if hands.tier("sidestep") >= 1:
+			decoy_t = float(GameData.HAND_GROWTH.sidestep.decoy_time)
+			decoy_p = from
+	last_move = st.move
+	last_move_t = time
 	# Fighting time per move ("use_w" weights a Shove like several Jabs).
 	if not ch.has("use"):
 		ch.use = {}
@@ -1163,6 +1259,9 @@ func finish_rest() -> void:
 		else:
 			journal("woke_stronger_bare")
 			journal("lean_" + lean_hint().md5_text().substr(0, 8), lean_hint())
+	for got in hands.on_rest():   # moves learned from monsters, and moves that grew
+		journal(String(got[0]), String(got[1]))
+		ring(player.position, 8, 70, 0.6, C.ink, 2.5)
 	var ceremony: bool = in_hearth and ceremony_ready()
 	if ceremony_ready() and not in_hearth:
 		journal("ceremony_call")
@@ -1377,6 +1476,12 @@ func _draw_under(d: Node2D) -> void:
 		var f: float = minf(1.0, (1.0 - z.t / z.life) * 3.0)
 		d.draw_circle(z.p, z.r, Color(C[z.el], 0.16 * f))
 		Ink.dashed_circle(d, z.p, z.r, Color(C[z.el], 0.6 * f), 1.5, time * 0.5)
+	if decoy_t > 0.0:
+		# The smear of ink a grown Sidestep leaves behind.
+		var k: float = decoy_t / float(GameData.HAND_GROWTH.sidestep.decoy_time)
+		var dr: float = float(GameData.HAND_GROWTH.sidestep.decoy_r)
+		d.draw_colored_polygon(Ink.blob(decoy_p, dr, 3.0, time * 3.0), Color(C.ink, 0.45 * k))
+		d.draw_arc(decoy_p, dr + 2.0, 0, TAU, 20, Color(C.ink_soft, 0.6 * k), 1.0)
 
 
 func _draw_over(d: Node2D) -> void:
@@ -1533,3 +1638,79 @@ func _draw_aim(d: Node2D) -> void:
 			Ink.dashed_circle(d, zp, float(st.radius) * (1.0 + 0.15 * int(st.get("tier", 0))), col, 1.5, time * 0.5)
 		"nova":
 			Ink.dashed_circle(d, p, float(st.radius) * (1.0 + 0.25 * int(st.get("tier", 0))), col, 1.5, time * 0.5)
+
+
+# ================================================================ Bare hands growth (see hands.gd)
+
+## A basic move after growth (HAND_GROWTH): wider Shove, and so on.
+func _grow_move(st: Dictionary) -> Dictionary:
+	if st.move == "shove" and hands.tier("shove") >= 2:
+		var G: Dictionary = GameData.HAND_GROWTH.shove
+		st.radius = float(st.radius) * float(G.radius_mult)
+		st.push = float(st.push) * float(G.push_mult)
+	return st
+
+
+## One of your bare-hands moves just landed on `e`. Applies growth and hand secrets.
+## Returns [damage multiplier, stagger seconds to force (0 = none)].
+func _hand_hit(e, move: String, base: float) -> Array:
+	var m := 1.0
+	var stagger := 0.0
+	var S: Dictionary = GameData.HAND_SECRETS
+	var G: Dictionary = GameData.HAND_GROWTH
+	var id: int = e.get_instance_id()
+	match move:
+		"jab":
+			if e.aggro:
+				hands.use("jab")
+			if last_move == "sidestep" and time - last_move_t <= float(S.backhand.window):
+				m *= float(S.backhand.mult)
+				stagger = maxf(stagger, float(GameData.MONSTERS.stagger))
+				hands.secret("backhand")
+			if e.state == "windup" and e.state_t <= float(S.counter.late):
+				stagger = maxf(stagger, float(S.counter.stagger))
+				hands.secret("counter")
+			# Clean blows in a row on one monster.
+			if id == clean_id:
+				clean_n += 1
+			else:
+				clean_id = id
+				clean_n = 1
+			if clean_n >= int(S.untouched.count):
+				clean_n = 0
+				var c: Vector2 = e.position
+				ring(c, 6, float(S.untouched.splash_r), 0.35, C.ink, 2.5)
+				for o in enemies:
+					if o != e and not o.dead and o.position.distance_to(c) < float(S.untouched.splash_r) + o.r:
+						delayed.append({"t": 0.05, "fn": func(): hit(o, base * float(S.untouched.splash), "none", "player")})
+				hands.secret("untouched")
+			var t: int = hands.tier("jab")
+			if t >= 1:
+				delayed.append({"t": 0.12, "fn": func():
+					if not e.dead:
+						hit(e, base * float(G.jab.second_hit), "none", "player")})
+			if t >= 2 and id == last_hit_id and (chain_len + 1) % 3 == 0 and time - last_hit_t <= float(GameData.LEAN.combo_window):
+				e.knock += (e.position - player.position).normalized() * float(G.jab.third_knock)
+				stagger = maxf(stagger, float(G.jab.third_stagger))
+		"shove":
+			if hands.tier("shove") >= 1:
+				stagger = maxf(stagger, float(G.shove.stagger))
+			e.crash_t = float(S.tangle.window)
+			e.crash_kind = "tangle"
+		"sidestep":
+			if hands.tier("sidestep") >= 2:
+				stagger = maxf(stagger, 0.8)
+				e.face = -e.face
+		"flank":
+			if e == flank_target:
+				m *= float(GameData.LEARNED_MOVES.flank.behind_mult)
+				stagger = maxf(stagger, float(GameData.MONSTERS.stagger))
+				e.face = (player.position - e.position).normalized()
+	return [m, stagger]
+
+
+## Where monster `e` should head: your decoy if one is out and closer, else you.
+func lure_for(e) -> Vector2:
+	if decoy_t > 0.0 and e.position.distance_to(decoy_p) < e.position.distance_to(player.position):
+		return decoy_p
+	return player.position

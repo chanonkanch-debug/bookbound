@@ -288,3 +288,55 @@ region. Full table in the Phase 3 report.
   regions where your element is weak or resisted are slower for it than they would be for a curious player.
 - Some secrets (Quake inside Rampart, Pyre on Pyre) need deliberate setup, and are likely to be found late
   or by reading F1.
+
+## Bare hands that grow
+
+Before, Jab, Shove and Sidestep looked and played the same from the first fight to the ceremony, and the
+only progress was a hidden damage bonus. Now the bare-hands phase has its own small arc, all numberless and
+written into the journal. Numbers are in the "Bare hands: learning by fighting" block of `game_data.gd`;
+rules are in `world/hands.gd`, with the hooks in `world.gd` (`_hand_hit`, `_cast_bare`, `enemy_strike`).
+
+Ideas researched and chosen: Absolver (learn a move by surviving it), use-based skills with Raph Koster's
+warning about grinding (only meaningful use counts), and Sifu (rejected for now: harsher failure would fight
+the slow pace). The brainstorm doc lists the others.
+
+### Learning moves from monsters (`HAND_LESSONS`, `LEARNED_MOVES`)
+Dodging a monster's strike (Sidestepping through it, or it biting your decoy), interrupting its wind-up, or
+Bracing against it counts as one lesson from that kind of monster. After enough lessons, your next rest
+teaches you its move, which becomes a new stance on keys 4, 5 and 6 (or Q/E):
+- **Flank Step** (Inklings, 4 lessons): circles to the far side of the nearest monster and hits it from
+  behind, always interrupting it.
+- **Bull Rush** (Blots, 3 lessons): a long read, then a straight charge that knocks everything aside.
+  Overcharging makes it go further.
+- **Brace** (Smudge Knights, 2 lessons): no damage. For 2.5 s, blows from the front mostly glance off and
+  the attacker reels. It counts as standing your ground.
+
+Learned moves only exist before the book. They also share the hidden mastery bonus with the basic three.
+
+### Moves that grow (`HAND_GROWTH`)
+Only meaningful uses count, so swinging at the air does nothing: a Jab that lands on a monster hunting you,
+a Shove that catches something, a Sidestep that slips through a monster or a strike. At each threshold the
+next rest grows the move one step, shown as small dots under its mark:
+- **Jab**: 1) every Jab lands a second time; 2) every third Jab in a row on one monster knocks it back and staggers it.
+- **Shove**: 1) what it catches reels; 2) wider and harder.
+- **Sidestep**: 1) leaves an ink decoy where you stood, which monsters chase and bite; 2) slipping
+  through a monster turns it around and leaves it reeling.
+
+### Hand secrets (`HAND_SECRETS`)
+Four hidden combos, each written into the journal the first time: **backhand** (Sidestep, then Jab right
+away: more damage, always interrupts), **counter** (a Jab right at the end of a wind-up: a long stagger),
+**tangle** (a Shove throws one monster into another: both reel) and **untouched** (three Jabs on one
+monster without getting hurt: the third splashes onto those nearby).
+
+### Hands tint toward your leaning (`HAND_TINT`)
+Your fist slowly takes on the colour of the element your fighting style leans toward, so the ceremony's
+book feels like the answer to something you watched build. It reads the same scores the ceremony uses.
+
+### Saves
+`save_version` is now 4; migration adds an empty `hands` record.
+
+### Deferred or not quite right yet (bare hands)
+- The balance bot doesn't use learned moves, so its bare-hands times only show the effect of growth.
+- There's no nudge for the new keys 4 to 6 yet. The journal line and the new mark on the stance bar
+  are the only hints.
+- Knights live far out, so Brace will be rare before the ceremony. That's on purpose: it's a reward for exploring.
