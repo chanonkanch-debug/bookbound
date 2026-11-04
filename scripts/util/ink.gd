@@ -37,6 +37,17 @@ static func dashed_circle(d: CanvasItem, c: Vector2, r: float, col: Color, w: fl
 		d.draw_arc(c, r, a0, a0 + TAU / segs, 4, col, w)
 
 
+static func dashed_line(d: CanvasItem, a: Vector2, b: Vector2, col: Color, w: float, dash := 10.0) -> void:
+	var len := a.distance_to(b)
+	if len < 1.0:
+		return
+	var dir := (b - a) / len
+	var x := 0.0
+	while x < len:
+		d.draw_line(a + dir * x, a + dir * minf(len, x + dash * 0.6), col, w)
+		x += dash
+
+
 ## Draws text centred on `pos` (pos is the baseline).
 static func text_c(d: CanvasItem, pos: Vector2, s: String, size: int, col: Color) -> void:
 	var f := ThemeDB.fallback_font

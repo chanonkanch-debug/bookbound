@@ -13,6 +13,7 @@ const PlayerScript := preload("res://scripts/world/player.gd")
 const EnemyScript := preload("res://scripts/world/enemy.gd")
 const AllyScript := preload("res://scripts/world/ally.gd")
 const HiddenChapter := preload("res://scripts/world/hidden_chapter.gd")
+const Casting := preload("res://scripts/world/casting.gd")
 const HudScript := preload("res://scripts/ui/hud.gd")
 const BookScript := preload("res://scripts/ui/book_overlay.gd")
 
@@ -30,6 +31,7 @@ var C: Dictionary = GameData.COLORS
 var player
 var ally
 var chapter
+var casting
 var hud
 var book
 var camera: Camera2D
@@ -47,14 +49,17 @@ var chains: Array = []
 var delayed: Array = []
 var scribbles: Array = []
 
-var cds: Array = [0.0, 0.0, 0.0, 0.0]
+var last_page_cd := 0.0
+var read_held := false      # the read key is down (set from input, or by the balance bot)
+var last_page_held := false # the Last Page key is down
+var bot_aim = null          # a Vector2 set by the balance bot instead of the mouse
+var aim_mouse := false      # true once the mouse has moved; keyboard/gamepad players aim where they face
 var streak := 0
 var streak_t := 0.0
 var time := 0.0
 var hint_flash := 0.0
 var awaken_fx := 0.0
 var syn_t := 0.0
-var mana_warn_t := 0.0
 var spawn_t := 0.0
 var save_t := 5.0
 var paused := false
@@ -103,6 +108,7 @@ func _ready() -> void:
 	camera.make_current()
 
 	chapter = HiddenChapter.new(self)
+	casting = Casting.new(self)
 	hud = HudScript.new()
 	hud.w = self
 	add_child(hud)
@@ -110,7 +116,7 @@ func _ready() -> void:
 	book.w = self
 	add_child(book)
 
-	for i in 10:
+	for i in int(GameData.MONSTERS.initial):
 		spawn(true)
 	log_msg("%s steps out of the Hearth. Mira (%s) follows." % [ch.name, GameData.ELEMENTS[ally.el].name])
 	if not Game.has_book():
@@ -123,6 +129,10 @@ func _ready() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		pointer_down = event.pressed and not paused
+	if event is InputEventMouseMotion:
+		aim_mouse = true
+	elif event is InputEventJoypadMotion and absf(event.axis_value) > 0.3:
+		aim_mouse = false
 
 
 func _process(delta: float) -> void:
@@ -135,9 +145,15 @@ func _process(delta: float) -> void:
 	elif book.visible and Input.is_action_just_pressed("ui_cancel"):
 		book.close()
 	if not paused:
-		for i in 4:
-			if Input.is_action_just_pressed("cast_%d" % (i + 1)):
-				cast(i)
+		for i in 3:
+			if Input.is_action_just_pressed("page_%d" % (i + 1)):
+				casting.turn_to(i)
+		if Input.is_action_just_pressed("page_prev"):
+			casting.turn_by(-1)
+		if Input.is_action_just_pressed("page_next"):
+			casting.turn_by(1)
+		read_held = Input.is_action_pressed("read")
+		last_page_held = Input.is_action_pressed("cast_4")
 		_update(dt)
 	under.queue_redraw()
 	over.queue_redraw()
@@ -149,14 +165,12 @@ func _process(delta: float) -> void:
 func _update(dt: float) -> void:
 	time += dt
 	syn_t -= dt
-	mana_warn_t -= dt
-	for i in 4:
-		if cds[i] > 0.0:
-			cds[i] -= dt
+	last_page_cd = maxf(0.0, last_page_cd - dt)
 	if pointer_down and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		pointer_down = false
 
 	player.tick(dt)
+	casting.tick(dt, read_held or last_page_held, 3 if last_page_held else -1)
 	if not Game.has_book():
 		_track_movement()
 	if ceremony_ready() and player.dead_t <= 0.0 and player.position.length() < GameData.TOWN_RADIUS:
@@ -168,12 +182,12 @@ func _update(dt: float) -> void:
 
 	spawn_t -= dt
 	if spawn_t <= 0.0:
-		spawn_t = 0.6
+		spawn_t = float(GameData.MONSTERS.spawn_every)
 		var n := 0
 		for e in enemies:
 			if e.position.distance_to(player.position) < 900:
 				n += 1
-		if n < GameData.MAX_ENEMIES_NEARBY:
+		if n < int(GameData.MONSTERS.max_nearby):
 			spawn(false)
 
 	for e in enemies:
@@ -237,6 +251,14 @@ func spawn(initial: bool) -> void:
 		e.setup(self, tier, p)
 		actors.add_child(e)
 		enemies.append(e)
+		if e.behavior == "pair":   # Inklings come in twos
+			var e2 = EnemyScript.new()
+			e2.setup(self, tier, p + Vector2.from_angle(randf() * TAU) * 30.0)
+			e2.side = -1.0
+			e.partner = e2
+			e2.partner = e
+			actors.add_child(e2)
+			enemies.append(e2)
 		return
 
 
@@ -270,6 +292,7 @@ func _update_projectiles(dt: float) -> void:
 				var st: Dictionary = pj.st
 				if st.get("push", 0.0) > 0.0:
 					e.knock += pj.v.normalized() * float(st.push) * 2.2
+					e.interrupt()
 				if st.get("soak", false):
 					e.soak = 3.5
 				if pj.explode:
@@ -366,9 +389,11 @@ func hit(e, base: float, el: String, src: String, move := "") -> void:
 	var dmg := maxi(1, roundi(base * m * randf_range(0.9, 1.1)))
 	e.hp -= dmg
 	e.flash = 0.12
+	if dmg >= e.max_hp * float(GameData.MONSTERS.interrupt_frac):
+		e.interrupt()
 	e.aggro = true
 	if src == "ally":
-		e.ally_hit = 2.0
+		e.ally_hit = float(GameData.CHAPTER_TUNING.echo_window)
 	add_text(e.position + Vector2(randf_range(-6, 6), -e.r - 4), str(dmg), C.ink_soft if src == "ally" else C.ink, 13, 0.6)
 	if e.hp <= 0:
 		kill(e, src)
@@ -481,7 +506,7 @@ func kill(e, src: String) -> void:
 			signal_lean("clean_kill")
 	splats.append({"p": e.position, "r": e.r * 1.5, "t": 0.0, "life": 4.0, "sd": randf() * 9.0})
 	streak += 1
-	streak_t = 8.0
+	streak_t = float(GameData.STREAK_WINDOW)
 	chapter.on_kill(e, src)
 	gain_xp(e.xp)
 
@@ -508,6 +533,17 @@ func gain_xp(n: int) -> void:
 		Game.save_game()
 
 
+## A monster's strike lands (or is dodged mid-dash).
+func enemy_strike(e) -> void:
+	if player.dead_t > 0.0:
+		return
+	if player.dodge_t > 0.0:
+		ring(player.position, 6, 30, 0.3, C.ink_soft, 1.5)
+		return
+	e.bit_player = true
+	hurt(e.dmg)
+
+
 func hurt(d: float) -> void:
 	if player.dead_t > 0.0:
 		return
@@ -516,18 +552,30 @@ func hurt(d: float) -> void:
 		d *= 1.0 - float(GameData.STANCES.planted_guard)
 	player.hp -= d
 	player.hurt_t = 0.25
+	casting.on_hurt()
 	if player.hp <= 0.0:
-		player.hp = 0.0
-		player.dead_t = 2.5
-		ch.xp = int(ch.xp * 0.9)
-		streak = 0
-		player.low = false
-		log_msg("You fell. You lost 10% of your XP and wake at the Hearth.")
+		_die()
+
+
+func _die() -> void:
+	player.hp = 0.0
+	player.dead_t = 2.5
+	ch.xp = int(ch.xp * 0.9)
+	streak = 0
+	player.low = false
+	casting.reading = false
+	log_msg("You fell. You lost 10% of your XP and wake at the Hearth.")
+
+
+## Overcasting: the missing ink was paid in health (see casting.gd).
+func on_overcast(_hp_cost: float) -> void:
+	player.hurt_t = 0.15
 
 
 func _push_soak_slow(e, st: Dictionary, origin: Vector2) -> void:
 	if st.get("push", 0.0) > 0.0:
 		e.knock += (e.position - origin).normalized() * float(st.push) * 2.2
+		e.interrupt()
 	if st.get("slow", 0.0) > 0.0:
 		e.slow_t = 1.5
 		e.slow_f = st.slow
@@ -535,14 +583,49 @@ func _push_soak_slow(e, st: Dictionary, origin: Vector2) -> void:
 		e.soak = 3.5
 
 
-## Carries out one spell. `src` is "player" or "ally". Returns false if it fizzled.
-func perform(st: Dictionary, target, src: String, mult: float) -> bool:
+## Where the player is aiming: the mouse cursor, or straight ahead without a mouse.
+## The balance bot sets bot_aim instead.
+func aim_point() -> Vector2:
+	if bot_aim != null:
+		return bot_aim
+	if aim_mouse:
+		return get_global_mouse_position()
+	return player.position + player.facing * 220.0
+
+
+## The enemy a chain spell jumps to first: closest to the aim point, or the first
+## one along the aim line (see AIM in game_data.gd).
+func chain_target(origin: Vector2, aim: Vector2, max_range: float):
+	var best = null
+	var bd := float(GameData.AIM.chain_snap)
+	for e in enemies:
+		if e.dead or origin.distance_to(e.position) > max_range:
+			continue
+		var d: float = aim.distance_to(e.position)
+		if d < bd:
+			bd = d
+			best = e
+	if best != null:
+		return best
+	var dir := (aim - origin).normalized()
+	var bdist := max_range
+	for e in enemies:
+		if e.dead:
+			continue
+		var to: Vector2 = e.position - origin
+		if to.length() < bdist and absf(dir.angle_to(to)) < float(GameData.AIM.chain_cone):
+			bdist = to.length()
+			best = e
+	return best
+
+
+## Carries out one spell aimed at `aim` (a world position). `src` is "player" or "ally".
+## Returns false if it found nothing to hit (chains only; the ink is still spent).
+func perform(st: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 	var o = ally if src == "ally" else player
 	var origin: Vector2 = o.position
 	var col: Color = C[st.el]
-	var dir: Vector2 = player.facing
-	if target != null:
-		dir = (target.position - origin).normalized()
+	var dir: Vector2 = (aim - origin).normalized() if aim.distance_to(origin) > 1.0 else o.facing
 	var dmg: float = float(st.dmg) * mult
 	var tier: int = int(st.get("tier", 0))
 	match st.kind:
@@ -556,9 +639,10 @@ func perform(st: Dictionary, target, src: String, mult: float) -> bool:
 					"hit": [], "st": st, "explode": tier >= 3,
 				})
 		"chain":
-			if target == null or origin.distance_to(target.position) > float(st.range):
-				if src == "player":
-					add_text(origin + Vector2(0, -24), "No target", C.ink_soft, 13, 0.8)
+			var target = chain_target(origin, aim, float(st.range))
+			if target == null:
+				# The spark crackles out along the aim line and grounds itself.
+				chains.append({"a": origin, "b": origin + dir * minf(float(st.range), origin.distance_to(aim)), "t": 0.2, "col": col, "wide": false})
 				return false
 			var done: Array = []
 			var from_p := origin
@@ -584,9 +668,7 @@ func perform(st: Dictionary, target, src: String, mult: float) -> bool:
 			if tier >= 3:
 				delayed.append({"t": 0.35, "fn": pulse})
 		"zone":
-			var zp: Vector2 = origin + dir * 80.0
-			if target != null:
-				zp = origin + dir * minf(origin.distance_to(target.position), float(st.range))
+			var zp: Vector2 = origin + dir * minf(origin.distance_to(aim), float(st.range))
 			var zr: float = float(st.radius) * (1.0 + 0.15 * tier)
 			zones.append({
 				"p": zp, "r": zr, "life": float(st.dur) * (1.0 + 0.3 * tier), "t": 0.0,
@@ -607,60 +689,35 @@ func perform(st: Dictionary, target, src: String, mult: float) -> bool:
 					_push_soak_slow(e, {"push": 80.0}, closest)
 			chains.append({"a": origin, "b": end_p, "t": 0.25, "col": col, "wide": true})
 			o.position = end_p
+			o.facing = dir
+			if src == "player":
+				player.dodge_t = float(GameData.DODGE_TIME)
 			ring(end_p, 6, 60, 0.35, col, 2)
 	return true
 
 
-## Cast spell slot i (0–2), or 3 for the hidden Last Page spell.
-## Before the ceremony, slots 0–2 are the bare-hands moves.
-func cast(i: int, aim = null) -> void:
-	if paused or player.dead_t > 0.0:
-		return
+## A finished read (see casting.gd): the spell goes off at the aim point.
+## `slot` is the page index, or 3 for the hidden Last Page spell.
+func on_cast(slot: int, st: Dictionary, mult: float) -> void:
+	var aim := aim_point()
 	if not Game.has_book():
-		_cast_bare(i, aim)
+		_cast_bare(st, aim)
 		return
-	var a: Dictionary = ch.aspect
-	if i == 3:
-		if not last_page_ready() or cds[3] > 0.0:
-			return
-		var prim: Dictionary = Game.spell_stats(ch.spells[0])
-		perform({"kind": "nova", "el": ch.el, "dmg": prim.dmg * 3.0 + 40.0, "radius": 200.0, "tier": 0}, null, "player", 1.0)
+	if slot == 3:
+		perform(st, aim, "player", 1.0)
 		ring(player.position, 10, 220, 0.8, C.gilt, 4)
 		add_text(player.position + Vector2(0, -34), "Last Page", C.gilt, 20, 1.4)
-		cds[3] = 12.0
+		last_page_cd = 12.0
 		return
-	if i >= ch.spells.size() or cds[i] > 0.0:
-		return
-	var st: Dictionary = Game.spell_stats(ch.spells[i])
 	var still: bool = player.still > 0.4
-	var free: bool = a.awakened and a.id == "stillness" and still
-	var cost: float = 0.0 if free else float(st.mana)
-	if player.mana < cost:
-		if mana_warn_t <= 0.0:
-			add_text(player.position + Vector2(0, -24), "Out of mana", C.water, 13, 0.8)
-			mana_warn_t = 0.8
-		return
-	var target = nearest(player.position, 460.0)
-	if not perform(st, target, "player", 1.0):
-		return
-	player.mana -= cost
-	cds[i] = st.cd
+	perform(st, aim, "player", mult)
 	if ch.el == "fire":
 		player.heat = mini(5, player.heat + 1)
-		player.heat_t = 2.5
+		player.heat_t = float(GameData.FIRE_HEAT_WINDOW)
 	chapter.on_cast(still)
 
 
-func _cast_bare(i: int, aim = null) -> void:
-	if i >= GameData.BARE_HANDS.size() or cds[i] > 0.0:
-		return
-	var st: Dictionary = Game.bare_stats(i)
-	if player.mana < float(st.mana):
-		if mana_warn_t <= 0.0:
-			add_text(player.position + Vector2(0, -24), "Out of mana", C.water, 13, 0.8)
-			mana_warn_t = 0.8
-		return
-	var target = aim if aim != null and is_instance_valid(aim) and not aim.dead else nearest(player.position, 460.0)
+func _cast_bare(st: Dictionary, aim: Vector2) -> void:
 	var L: Dictionary = GameData.LEAN
 	if st.move == "sidestep":
 		if nearest(player.position, float(L.dash_near)) != null:
@@ -668,22 +725,24 @@ func _cast_bare(i: int, aim = null) -> void:
 		player.still = 0.0   # a dash is movement, so it never counts as standing your ground
 	if st.move == "shove" and nearest(player.position, float(L.repel_range)) != null:
 		signal_lean("repel")
+	if st.move == "jab":
+		# A punch has short reach: aim it at the enemy nearest the aim line if one is in reach.
+		var tgt = chain_target(player.position, aim, 90.0)
+		if tgt != null:
+			aim = tgt.position
 	action_hits = 0
-	if not perform(st, target, "player", 1.0):
-		return
+	perform(st, aim, "player", 1.0)
 	if action_hits >= 2:
 		signal_lean("multi", action_hits - 1)
-	# Fighting time per move (cooldown-weighted, so a Shove counts as much as six Jabs).
+	# Fighting time per move ("use_w" weights a Shove like several Jabs).
 	if not ch.has("use"):
 		ch.use = {}
-	ch.use[st.move] = float(ch.use.get(st.move, 0.0)) + float(st.cd)
-	player.mana -= float(st.mana)
-	cds[i] = st.cd
+	ch.use[st.move] = float(ch.use.get(st.move, 0.0)) + float(st.use_w)
 
 
 func last_page_ready() -> bool:
 	var a: Dictionary = ch.aspect
-	return a.awakened and a.id == "lastpage" and player.dead_t <= 0.0 and player.hp / Game.max_hp() < 0.3
+	return a.awakened and a.id == "lastpage" and player.dead_t <= 0.0 and player.hp / Game.max_hp() < 0.3 and last_page_cd <= 0.0
 
 
 func spend_ink(i: int) -> void:
@@ -813,3 +872,63 @@ func _draw_over(d: Node2D) -> void:
 			d.draw_arc(player.position, 20.0 + kk * 260.0, 0, TAU, 64, Color(C.gilt, (1.0 - kk) * 0.8), 3.0)
 	for t in texts:
 		Ink.text_c(d, t.p, t.s, t.size, Color(t.col, 1.0 - t.age / t.life))
+	_draw_reading(d)
+
+
+const GLYPHS := "abcdefghijklmnopqrstuvwxyz"
+
+
+## Reading shows on the character, never as a bar: letters lift off the book and a
+## ring fills around you. Past the read time the ring turns gold and grows (overcharge).
+func _draw_reading(d: Node2D) -> void:
+	if player.dead_t > 0.0:
+		return
+	var p: Vector2 = player.position
+	var book_p: Vector2 = p + Vector2(15, 0)
+	var col: Color = C[ch.el] if Game.has_book() else C.ink
+	if casting.fizzle_fx > 0.0:
+		var f: float = casting.fizzle_fx / 0.5
+		for i in 7:
+			var fp: Vector2 = book_p + Vector2(sin(i * 2.1) * 10.0, (1.0 - f) * 26.0 + i * 2.0)
+			Ink.text_c(d, fp, GLYPHS[(i * 7) % 26], 10, Color(C.ink_soft, f * 0.7))
+	if not casting.reading:
+		return
+	var k: float = casting.progress()
+	var oc: float = casting.overcharge()
+	d.draw_arc(p, 22.0, -PI / 2.0, -PI / 2.0 + TAU * k, 40, Color(col, 0.35 + 0.4 * k), 2.5)
+	if k >= 1.0:
+		d.draw_arc(p, 22.0, 0, TAU, 40, Color(col, 0.8), 2.5)
+		if oc > 0.0:
+			d.draw_arc(p, 27.0 + 4.0 * oc, -PI / 2.0, -PI / 2.0 + TAU * oc, 40, Color(C.gilt, 0.5 + 0.5 * oc), 1.5 + 2.0 * oc)
+	var n := int(2 + 8 * k + 8 * oc)
+	for i in n:
+		var rise := fmod(time * (26.0 + 10.0 * oc) + i * 11.0, 34.0)
+		var lp: Vector2 = book_p + Vector2(sin(time * 2.0 + i * 1.7) * (6.0 + i), -rise)
+		var a: float = (1.0 - rise / 34.0) * (0.5 + 0.5 * k)
+		Ink.text_c(d, lp, GLYPHS[(i * 5 + int(time * 3.0)) % 26], 10 + int(4.0 * oc), Color(col.lerp(C.gilt, oc), a))
+	_draw_aim(d)
+
+
+## A faint aim line or placement circle, only while reading.
+func _draw_aim(d: Node2D) -> void:
+	var st: Dictionary = casting.st
+	var p: Vector2 = player.position
+	var aim := aim_point()
+	var dir: Vector2 = (aim - p).normalized() if aim.distance_to(p) > 1.0 else player.facing
+	var col := Color(C[st.el] if C.has(st.el) else C.ink, float(GameData.AIM.line_alpha))
+	match st.kind:
+		"bolt":
+			var reach: float = float(st.speed) * float(st.get("life", 1.1))
+			Ink.dashed_line(d, p + dir * 24.0, p + dir * reach, col, 1.5)
+		"chain":
+			Ink.dashed_line(d, p + dir * 24.0, p + dir * minf(float(st.range), p.distance_to(aim)), col, 1.5)
+			var tgt = chain_target(p, aim, float(st.range))
+			if tgt != null:
+				d.draw_arc(tgt.position, tgt.r + 6.0, 0, TAU, 24, col, 1.5)
+		"dash":
+			Ink.dashed_line(d, p + dir * 24.0, p + dir * float(st.dash_len), col, 3.0)
+		"zone":
+			var zp: Vector2 = p + dir * minf(p.distance_to(aim), float(st.range))
+			Ink.dashed_circle(d, zp, float(st.radius) * (1.0 + 0.15 * int(st.get("tier", 0))), col, 1.5, time * 0.5)
+		"nova":
+			Ink.dashed_circle(d, p, float(st.radius) * (1.0 + 0.25 * int(st.get("tier", 0))), col, 1.5, time * 0.5)

@@ -28,12 +28,16 @@ The first time you open it, Godot spends a few seconds importing. That's normal.
 | Action | Keys |
 |---|---|
 | Move | WASD or arrow keys, or hold the left mouse button on the map |
-| Cast spells | 1, 2, 3 (aims at the nearest enemy) |
-| Bare hands, before your book | 1 Jab, 2 Shove, 3 Sidestep |
-| Hidden spell (if you unlock it) | 4 |
+| Read (cast) | Hold Space or the right mouse button, release to cast. Aims at the mouse (or where you face) |
+| Turn the page | 1, 2, 3 to go to a page, Q / E or the mouse wheel for one page back / forward |
+| Bare hands, before your book | The same keys: 1 Jab, 2 Shove, 3 Sidestep, then hold Space |
+| Hidden spell (if you unlock it) | Hold 4 |
 | Open your book | B (Esc or B to close) |
 | Designer view (spoilers) | F1 |
 | Screenshot | F12 |
+
+Casting takes time now: hold to read, release too early and it fizzles, hold longer to charge it.
+See `docs/DESIGN_NOTES.md` for every rule and number.
 
 ---
 
@@ -103,7 +107,7 @@ From a terminal you can run the automatic smoke test, which plays for a few seco
 fights bare-handed, attends the Book Ceremony, uses every spell, awakens a hidden chapter, and quits:
 
 ```
-godot --path . -- --autotest
+godot --headless --path . -- --autotest
 ```
 
 If it prints `Autotest finished`, the game logic works end to end.

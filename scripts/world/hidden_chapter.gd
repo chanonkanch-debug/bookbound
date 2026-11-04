@@ -33,7 +33,7 @@ func progress() -> void:
 
 func on_kill(e, src: String) -> void:
 	var a := aspect()
-	if a.id == "hunger" and w.streak >= 5:
+	if a.id == "hunger" and w.streak >= int(GameData.CHAPTER_TUNING.hunger_streak):
 		progress()
 	if a.id == "echo" and src == "player" and e.ally_hit > 0.0:
 		progress()
@@ -60,7 +60,7 @@ func on_ally_cast(target) -> void:
 		echo.tier = 0
 	else:
 		echo = {"kind": "bolt", "el": w.ch.el, "dmg": prim.dmg, "speed": 520.0, "tier": 0}
-	w.perform(echo, target, "player", 0.5)
+	w.perform(echo, target.position, "player", 0.5)
 	w.add_text(w.player.position + Vector2(0, -26), "Echo", GameData.COLORS.gilt, 13, 0.8)
 
 

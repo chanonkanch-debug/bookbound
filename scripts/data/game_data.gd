@@ -4,8 +4,9 @@ extends Node
 
 const TOWN_RADIUS := 160.0        # The Hearth: safe zone in the middle of the map
 const WORLD_RADIUS := 1500.0      # Edge of the world
-const INK_PER_LEVEL := 2          # Ink you get each level, spent to grow spells
-const MAX_ENEMIES_NEARBY := 16
+const INK_PER_LEVEL := 2          # Writing ink you get each level, spent to grow spells
+# Two different "inks": casting ink (called mana in the code) is spent on every cast and
+# refills over time; writing ink (ch.ink) is earned by leveling and grows your spells.
 const CEREMONY_LEVEL := 5         # Level at which the Book Ceremony opens (walk into the Hearth)
 
 const COLORS := {
@@ -30,7 +31,7 @@ const COLORS := {
 # Each element is a verb: it changes HOW you play, not how strong you are.
 const ELEMENTS := {
 	"fire": {"name": "Fire", "verb": "Escalate",
-		"passive": "Each cast within 2.5 s of the last adds Heat: +12% damage, up to 5 stacks."},
+		"passive": "Each cast soon after the last adds Heat: +12% damage, up to 5 stacks."},
 	"water": {"name": "Water", "verb": "Redirect",
 		"passive": "Your spells push enemies back and leave them Soaked."},
 	"earth": {"name": "Earth", "verb": "Persist",
@@ -55,31 +56,35 @@ const THICKNESS := {
 # ---------------------------------------------------------------- Spells
 # kind: bolt (projectile), nova (burst around you), zone (lingers), dash, chain.
 # Spells evolve every 4 levels (tier 1, 2, 3).
+# Phase 1: there are no cooldowns any more. A spell is gated by its read time and by ink.
+#   read  = minimum seconds you must hold the cast key ("read the page") before releasing
+#   over  = extra seconds of holding that charge it up to OVERCHARGE_CAP more power (0 = no overcharge)
+#   mana  = casting ink it costs (paid when you start reading; half back if it fizzles)
 const SPELLS := {
 	"fire": [
-		{"name": "Ember Bolt", "kind": "bolt", "dmg": 14.0, "cd": 0.45, "mana": 4.0, "speed": 520.0},
-		{"name": "Flare Ring", "kind": "nova", "dmg": 22.0, "cd": 3.0, "mana": 14.0, "radius": 110.0},
-		{"name": "Pyre", "kind": "zone", "dmg": 7.0, "cd": 6.0, "mana": 18.0, "radius": 70.0, "dur": 4.0, "range": 200.0},
+		{"name": "Ember Bolt", "kind": "bolt", "dmg": 15.0, "read": 0.4, "over": 0.6, "mana": 6.0, "speed": 520.0},
+		{"name": "Flare Ring", "kind": "nova", "dmg": 24.0, "read": 0.8, "over": 0.8, "mana": 14.0, "radius": 110.0},
+		{"name": "Pyre", "kind": "zone", "dmg": 8.5, "read": 1.0, "over": 0.8, "mana": 16.0, "radius": 70.0, "dur": 4.5, "range": 230.0},
 	],
 	"water": [
-		{"name": "Tide Shot", "kind": "bolt", "dmg": 11.0, "cd": 0.5, "mana": 4.0, "speed": 460.0, "soak": true, "push": 70.0},
-		{"name": "Undertow", "kind": "nova", "dmg": 16.0, "cd": 3.2, "mana": 14.0, "radius": 120.0, "soak": true, "push": 170.0},
-		{"name": "Still Pool", "kind": "zone", "dmg": 4.0, "cd": 6.0, "mana": 16.0, "radius": 85.0, "dur": 5.0, "slow": 0.5, "soak": true, "range": 180.0},
+		{"name": "Tide Shot", "kind": "bolt", "dmg": 24.0, "read": 0.45, "over": 0.6, "mana": 6.0, "speed": 460.0, "soak": true, "push": 80.0},
+		{"name": "Undertow", "kind": "nova", "dmg": 40.0, "read": 0.8, "over": 0.8, "mana": 14.0, "radius": 120.0, "soak": true, "push": 190.0},
+		{"name": "Still Pool", "kind": "zone", "dmg": 13.0, "read": 1.0, "over": 0.8, "mana": 15.0, "radius": 85.0, "dur": 5.0, "slow": 0.5, "soak": true, "range": 210.0},
 	],
 	"earth": [
-		{"name": "Stone Shard", "kind": "bolt", "dmg": 16.0, "cd": 0.6, "mana": 5.0, "speed": 420.0, "pierce": 2},
-		{"name": "Quake", "kind": "nova", "dmg": 24.0, "cd": 3.6, "mana": 15.0, "radius": 100.0, "slow": 0.55},
-		{"name": "Rampart", "kind": "zone", "dmg": 6.0, "cd": 7.0, "mana": 18.0, "radius": 80.0, "dur": 8.0, "slow": 0.35, "range": 150.0},
+		{"name": "Stone Shard", "kind": "bolt", "dmg": 26.0, "read": 0.55, "over": 0.7, "mana": 7.0, "speed": 420.0, "pierce": 2},
+		{"name": "Quake", "kind": "nova", "dmg": 50.0, "read": 1.0, "over": 0.8, "mana": 15.0, "radius": 100.0, "slow": 0.55},
+		{"name": "Rampart", "kind": "zone", "dmg": 14.0, "read": 1.2, "over": 0.6, "mana": 16.0, "radius": 80.0, "dur": 9.0, "slow": 0.35, "range": 180.0},
 	],
 	"wind": [
-		{"name": "Gust", "kind": "bolt", "dmg": 10.0, "cd": 0.35, "mana": 3.0, "speed": 640.0, "push": 120.0},
-		{"name": "Cyclone Step", "kind": "dash", "dmg": 18.0, "cd": 2.4, "mana": 10.0, "dash_len": 190.0},
-		{"name": "Vortex", "kind": "zone", "dmg": 5.0, "cd": 6.5, "mana": 16.0, "radius": 110.0, "dur": 4.0, "pull": 130.0, "range": 200.0},
+		{"name": "Gust", "kind": "bolt", "dmg": 23.0, "read": 0.3, "over": 0.5, "mana": 4.0, "speed": 640.0, "push": 130.0},
+		{"name": "Cyclone Step", "kind": "dash", "dmg": 70.0, "read": 0.35, "over": 0.5, "mana": 10.0, "dash_len": 190.0},
+		{"name": "Vortex", "kind": "zone", "dmg": 22.0, "read": 1.0, "over": 0.8, "mana": 15.0, "radius": 110.0, "dur": 4.0, "pull": 130.0, "range": 230.0},
 	],
 	"lightning": [
-		{"name": "Spark", "kind": "chain", "dmg": 12.0, "cd": 0.55, "mana": 5.0, "jumps": 2, "range": 280.0},
-		{"name": "Arc Nova", "kind": "nova", "dmg": 20.0, "cd": 3.0, "mana": 14.0, "radius": 105.0},
-		{"name": "Storm Rod", "kind": "zone", "dmg": 10.0, "cd": 7.0, "mana": 18.0, "radius": 120.0, "dur": 5.0, "tick": 0.6, "range": 180.0},
+		{"name": "Spark", "kind": "chain", "dmg": 19.0, "read": 0.5, "over": 0.6, "mana": 7.0, "jumps": 2, "range": 300.0},
+		{"name": "Arc Nova", "kind": "nova", "dmg": 27.0, "read": 0.8, "over": 0.8, "mana": 14.0, "radius": 105.0},
+		{"name": "Storm Rod", "kind": "zone", "dmg": 14.0, "read": 1.1, "over": 0.6, "mana": 16.0, "radius": 120.0, "dur": 5.0, "tick": 0.6, "range": 210.0},
 	],
 }
 
@@ -90,11 +95,13 @@ const KIND_LABEL := {
 # ---------------------------------------------------------------- Bare hands
 # Everyone starts with no book. These are the moves you fight with until the ceremony.
 # Damage grows BARE_DMG_PER_LEVEL per level. "life" is how long a bolt flies (short = melee reach).
+# "read" is the hold time before the move goes off (see READ). "use_w" is how much one use counts
+# toward fighting time on that move (for thin/thick odds), so a Shove counts like six Jabs.
 # "move" tells the world which move made a hit, for the playstyle tracking below.
 const BARE_HANDS := [
-	{"name": "Jab", "move": "jab", "kind": "bolt", "label": "punch", "dmg": 9.0, "cd": 0.4, "mana": 0.0, "speed": 520.0, "life": 0.13},
-	{"name": "Shove", "move": "shove", "kind": "nova", "dmg": 6.0, "cd": 2.4, "mana": 8.0, "radius": 75.0, "push": 170.0},
-	{"name": "Sidestep", "move": "sidestep", "kind": "dash", "dmg": 4.0, "cd": 1.6, "mana": 6.0, "dash_len": 130.0},
+	{"name": "Jab", "move": "jab", "kind": "bolt", "label": "punch", "dmg": 24.0, "read": 0.3, "over": 0.0, "mana": 0.0, "speed": 520.0, "life": 0.13, "use_w": 0.4},
+	{"name": "Shove", "move": "shove", "kind": "nova", "dmg": 22.0, "read": 0.35, "over": 0.0, "mana": 4.0, "radius": 75.0, "push": 170.0, "use_w": 2.4},
+	{"name": "Sidestep", "move": "sidestep", "kind": "dash", "dmg": 14.0, "read": 0.05, "over": 0.0, "mana": 3.0, "dash_len": 130.0, "use_w": 1.6},
 ]
 const BARE_DMG_PER_LEVEL := 0.15
 
@@ -106,7 +113,7 @@ const MASTERY_MAX := 0.45
 
 # Small built-in perks so every way of fighting can level at a similar pace.
 const STANCES := {
-	"planted_dmg": 0.5,       # hits after standing still for planted_time deal +50%
+	"planted_dmg": 0.8,       # hits after standing still for planted_time deal +80% (was 50%)
 	"moving_speed": 0.05,     # +5% move speed while an enemy is chasing you
 	"brink_dmg": 0.2,         # +20% damage while below brink_hp health
 	"planted_guard": 0.3,     # take 30% less damage while planted
@@ -141,7 +148,7 @@ const SIGNALS := {
 	"chain": {"el": "fire", "w": 1.4}, "streak_kill": {"el": "fire", "w": 1.5}, "brink": {"el": "fire", "w": 1.0},
 	"push": {"el": "water", "w": 1.3}, "repel": {"el": "water", "w": 2.5}, "clean_kill": {"el": "water", "w": 1.6},
 	"planted": {"el": "earth", "w": 0.8}, "absorb": {"el": "earth", "w": 1.6}, "crowd": {"el": "earth", "w": 1.0},
-	"moving_hit": {"el": "wind", "w": 0.8}, "slip": {"el": "wind", "w": 2.5}, "kite": {"el": "wind", "w": 1.0},
+	"moving_hit": {"el": "wind", "w": 0.4}, "slip": {"el": "wind", "w": 2.5}, "kite": {"el": "wind", "w": 0.5},
 	"spread": {"el": "lightning", "w": 0.6}, "multi": {"el": "lightning", "w": 2.0}, "snap": {"el": "lightning", "w": 3.5},
 }
 
@@ -170,8 +177,8 @@ const LEAN := {
 	"crowd_count": 3,
 	"dash_near": 250.0,
 	"chase_range": 220.0,
-	"kite_step": 200.0,
-	"snap_window": 0.6,
+	"kite_step": 300.0,
+	"snap_window": 1.2,
 }
 
 # Book thickness follows focus. Your fighting time on each move is compared:
@@ -192,6 +199,66 @@ const LEAN_HINTS := {
 const LEAN_TORN := "Two feelings pull at you, and neither will let go."
 const LEAN_UNSURE := "Nothing in you has chosen a shape yet."
 
+# ================================================================ Phase 1: deliberate combat
+# Casting is reading. Hold the cast key (Space or right mouse) to read the open page, release to cast.
+const READ := {
+	"move_mult": 0.5,          # reading speed while moving (0.5 = half as fast)
+	"fizzle_refund": 0.5,      # share of the ink you get back when a read fizzles or breaks
+	"recover": 0.2,            # short pause after any cast before the next read can start
+	"overcharge_cap": 0.5,     # holding past the read time adds up to +50% power over the spell's "over" seconds
+	"overcharge_dash_len": 0.3,# an overcharged dash also travels up to 30% further
+	# Chance that a hit breaks your read, by book element ("none" = bare hands).
+	"break_chance": {"none": 0.5, "fire": 0.45, "water": 0.35, "earth": 0.2, "wind": 0.4, "lightning": 0.5},
+	"last_page_read": 0.6,     # the hidden Last Page spell reads this fast
+}
+
+# Page turning. The book is open to one page at a time; turning one page takes turn_time.
+# Thin books never turn. Pages don't wrap, so page 1 to page 3 is two turns.
+const PAGES := {
+	"turn_time": {"thin": 0.0, "medium": 0.35, "thick": 0.4},
+	"stance_switch": 0.2,      # bare hands: switching between Jab, Shove and Sidestep
+}
+
+# Aiming. Bolts, chains and dashes go toward the cursor (or where you face without a mouse).
+const AIM := {
+	"chain_snap": 80.0,        # a Spark jumps to the enemy closest to the cursor within this distance...
+	"chain_cone": 0.35,        # ...or the first enemy within this angle (radians) of your aim line
+	"line_alpha": 0.22,        # how faint the aim line / placement circle is while reading
+}
+
+# Casting ink ("mana" in the code). Scarce in the field, quick to refill when safe.
+const INK_REGEN := {
+	"field": 0.9,              # per second out in the field (was 6)
+	"hearth": 25.0,            # per second inside the Hearth
+}
+const OVERCAST := {
+	"hp_per_ink": 1.6,         # casting with too little ink costs this much health per missing ink
+	"strain_time": 2.5,        # seconds the strain shows on you and at the screen edges
+}
+
+# Player defence while dashing: a Sidestep or Cyclone Step dodges strikes for this long.
+const DODGE_TIME := 0.3
+
+# Thickness balance (Phase 1). Thin books never turn pages, so their single spell is only
+# a little stronger now. Thick books pay in page-turn time instead of extra ink.
+const THICK_BALANCE := {
+	"thin_dmg": 0.9,           # was 1.3
+	"medium_dmg": 1.05,
+	"thick_dmg": 1.3,
+	"thick_mana": 1.0,         # was 1.15
+}
+const FIRE_HEAT_WINDOW := 4.0  # Fire: casts within this many seconds of the last add Heat (was 2.5)
+const STREAK_WINDOW := 20.0    # seconds after a kill before your kill streak ends (was 8)
+
+# Hidden chapter pacing (Phase 1). With fewer, tougher monsters and slower casting the old
+# trigger counts would take far longer, so these keep each chapter at about the same play time.
+# The "need" ranges themselves are in ASPECTS below.
+const CHAPTER_TUNING := {
+	"hunger_streak": 3,        # Hunger counts kills made while on a streak of this many or more (was 5)
+	"hunger_act": [3, 4],      # ...and awakens when opened on a streak this long (rolled per book, was 8-12)
+	"echo_window": 4.0,        # seconds after Mira hits an enemy that your kill still counts for Echo (was 2)
+}
+
 # ---------------------------------------------------------------- Backgrounds
 # Weights are added to a base of 1 per element, so nothing is ever impossible.
 const BACKGROUNDS := {
@@ -203,11 +270,31 @@ const BACKGROUNDS := {
 }
 
 # ---------------------------------------------------------------- Monsters
+# Phase 1: fewer, heavier monsters. Every attack has a visible wind-up you can read and dodge.
+#   windup   seconds the monster swells/leans before it strikes (dodge or interrupt it)
+#   reach    how far the strike lands, measured from its edge to yours
+#   recover  seconds it needs after striking before it can wind up again
+#   behavior pair   = Inklings come in twos and try to flank you from both sides
+#            charge = Blots wind up, rush in a straight line, then rest (open to punishment)
+#            guard  = Smudge Knights turn slowly and only strike in an arc in front of them
 const FOES := [
-	{"name": "Inkling", "hp": 22.0, "spd": 62.0, "dmg": 6.0, "r": 11.0, "xp": 4},
-	{"name": "Blot", "hp": 72.0, "spd": 52.0, "dmg": 11.0, "r": 16.0, "xp": 11},
-	{"name": "Smudge Knight", "hp": 210.0, "spd": 58.0, "dmg": 18.0, "r": 22.0, "xp": 28},
+	{"name": "Inkling", "hp": 220.0, "spd": 72.0, "dmg": 14.0, "r": 11.0, "xp": 10, "behavior": "pair",
+		"windup": 0.5, "reach": 18.0, "recover": 1.3},
+	{"name": "Blot", "hp": 1000.0, "spd": 50.0, "dmg": 40.0, "r": 16.0, "xp": 30, "behavior": "charge",
+		"windup": 0.8, "reach": 4.0, "recover": 1.8, "charge_speed": 340.0, "charge_time": 0.55, "charge_from": 190.0},
+	{"name": "Smudge Knight", "hp": 3000.0, "spd": 44.0, "dmg": 60.0, "r": 22.0, "xp": 75, "behavior": "guard",
+		"windup": 1.0, "reach": 48.0, "recover": 1.2, "arc": 2.1, "turn": 1.5},
 ]
+
+# How monsters spawn and get interrupted.
+const MONSTERS := {
+	"max_nearby": 5,           # monsters within 900 px of you (was 16)
+	"initial": 4,              # monsters placed when the field opens
+	"spawn_every": 3.0,        # seconds between spawn checks
+	"interrupt_frac": 0.12,    # a hit for this share of its max health (or any push) breaks a wind-up
+	"stagger": 0.6,            # seconds a monster reels after being interrupted
+	"pair_offset": 30.0,       # how far apart a pair of Inklings tries to stand when flanking
+}
 
 const REGIONS := [
 	{"max": 160.0, "name": "The Hearth", "sub": "safe · you heal here"},
@@ -228,21 +315,21 @@ const ASPECTS := {
 		"hints": ["A page stirred when you stopped moving.", "The ink settles when you do.", "Be still. Then read."],
 	},
 	"hunger": {
-		"name": "Hunger", "need": [14, 24],
+		"name": "Hunger", "need": [3, 5],
 		"effect": "Each kill in a streak adds 4% damage, up to 60%. Resting at the Hearth clears it.",
-		"trigger": "Land {need} kills while on a streak of 5 or more.",
+		"trigger": "Land {need} kills while on a streak of 3 or more.",
 		"act": "Open the book while on a streak of {streak}+ kills.",
 		"hints": ["The book felt heavier after that kill.", "It does not want you to rest.", "Feed it. Then read, mid-hunt."],
 	},
 	"lastpage": {
-		"name": "Last Page", "need": [2, 3],
+		"name": "Last Page", "need": [1, 2],
 		"effect": "Below 30% health, a hidden spell appears: Last Page, a huge burst. Press 4.",
 		"trigger": "Fall below 25% health and recover past 60%, {need} times.",
 		"act": "Open the book while below 25% health.",
 		"hints": ["The back cover was warm when you nearly fell.", "Something is written where the pages end.", "Read it only at the edge."],
 	},
 	"echo": {
-		"name": "Echo", "need": [12, 22],
+		"name": "Echo", "need": [4, 7],
 		"effect": "Whenever Mira casts, your book answers with a free spell of its own.",
 		"trigger": "Finish off {need} enemies that Mira has just hit.",
 		"act": "Open the book standing beside Mira, with enemies near.",

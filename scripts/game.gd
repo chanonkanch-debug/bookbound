@@ -17,19 +17,38 @@ func _ready() -> void:
 ## your version wins and this is skipped.
 func _setup_input() -> void:
 	var map := {
-		"move_up": [KEY_W, KEY_UP], "move_down": [KEY_S, KEY_DOWN],
-		"move_left": [KEY_A, KEY_LEFT], "move_right": [KEY_D, KEY_RIGHT],
-		"cast_1": [KEY_1], "cast_2": [KEY_2], "cast_3": [KEY_3], "cast_4": [KEY_4],
-		"open_book": [KEY_B], "designer_view": [KEY_F1],
+		"move_up": [_key(KEY_W), _key(KEY_UP)], "move_down": [_key(KEY_S), _key(KEY_DOWN)],
+		"move_left": [_key(KEY_A), _key(KEY_LEFT)], "move_right": [_key(KEY_D), _key(KEY_RIGHT)],
+		"page_1": [_key(KEY_1)], "page_2": [_key(KEY_2)], "page_3": [_key(KEY_3)], "cast_4": [_key(KEY_4)],
+		"page_prev": [_key(KEY_Q), _mouse(MOUSE_BUTTON_WHEEL_UP), _pad(JOY_BUTTON_LEFT_SHOULDER)],
+		"page_next": [_key(KEY_E), _mouse(MOUSE_BUTTON_WHEEL_DOWN), _pad(JOY_BUTTON_RIGHT_SHOULDER)],
+		"read": [_key(KEY_SPACE), _mouse(MOUSE_BUTTON_RIGHT), _pad(JOY_BUTTON_A)],
+		"open_book": [_key(KEY_B)], "designer_view": [_key(KEY_F1)],
 	}
 	for action in map:
 		if InputMap.has_action(action):
 			continue
 		InputMap.add_action(action)
-		for k in map[action]:
-			var ev := InputEventKey.new()
-			ev.physical_keycode = k
+		for ev in map[action]:
 			InputMap.action_add_event(action, ev)
+
+
+func _key(k: Key) -> InputEvent:
+	var ev := InputEventKey.new()
+	ev.physical_keycode = k
+	return ev
+
+
+func _mouse(b: MouseButton) -> InputEvent:
+	var ev := InputEventMouseButton.new()
+	ev.button_index = b
+	return ev
+
+
+func _pad(b: JoyButton) -> InputEvent:
+	var ev := InputEventJoypadButton.new()
+	ev.button_index = b
+	return ev
 
 
 # ---------------------------------------------------------------- Rolling a book
@@ -181,7 +200,8 @@ func bind_book(c: Dictionary) -> void:
 	var need_range: Array = GameData.ASPECTS[aspect_id].need
 	var aspect := {
 		"id": aspect_id, "progress": 0, "stage": 0, "awakened": false, "margins": [],
-		"need": randi_range(need_range[0], need_range[1]), "streak": randi_range(8, 12),
+		"need": randi_range(need_range[0], need_range[1]),
+		"streak": randi_range(GameData.CHAPTER_TUNING.hunger_act[0], GameData.CHAPTER_TUNING.hunger_act[1]),
 	}
 	c.el = el
 	c.thick = thick
@@ -224,14 +244,12 @@ func spell_stats(slot: Dictionary) -> Dictionary:
 	var st: Dictionary = GameData.SPELLS[ch.el][int(slot.i)].duplicate()
 	var lvl := int(slot.lvl)
 	var dmg: float = float(st.dmg) * (1.0 + 0.2 * (lvl - 1))
-	if ch.thick == "thin":
-		dmg *= 1.3
+	dmg *= float(GameData.THICK_BALANCE[ch.thick + "_dmg"])
 	st.el = ch.el
 	st.lvl = lvl
 	st.tier = int(lvl / 4.0)
 	st.dmg = dmg
-	st.mana = float(st.mana) * (1.15 if ch.thick == "thick" else 1.0)
-	st.cd = float(st.cd) * maxf(0.6, 1.0 - 0.03 * (lvl - 1))
+	st.mana = float(st.mana) * (float(GameData.THICK_BALANCE.thick_mana) if ch.thick == "thick" else 1.0)
 	return st
 
 

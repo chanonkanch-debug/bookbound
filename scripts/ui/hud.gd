@@ -34,9 +34,33 @@ class Pips extends Control:
 class CastButton extends Button:
 	var cd := 0.0
 	var col := Color.RED
+	var open := false
 	func _draw() -> void:
 		if cd > 0.0:
 			draw_rect(Rect2(0, size.y - 4, size.x * cd, 4), col)
+		if open:
+			draw_rect(Rect2(Vector2.ZERO, size).grow(2.0), col, false, 2.0)
+
+
+## Darkens the screen edges: overcast strain now, low health later.
+class Vignette extends Control:
+	var amount := 0.0
+	var col := Color.BLACK
+	func _draw() -> void:
+		if amount <= 0.01:
+			return
+		var s := size
+		var e := minf(s.x, s.y) * 0.22
+		var solid := Color(col, amount)
+		var clear := Color(col, 0.0)
+		var quads := [
+			[Vector2(0, 0), Vector2(s.x, 0), Vector2(s.x - e, e), Vector2(e, e)],
+			[Vector2(s.x, 0), Vector2(s.x, s.y), Vector2(s.x - e, s.y - e), Vector2(s.x - e, e)],
+			[Vector2(s.x, s.y), Vector2(0, s.y), Vector2(e, s.y - e), Vector2(s.x - e, s.y - e)],
+			[Vector2(0, s.y), Vector2(0, 0), Vector2(e, e), Vector2(e, s.y - e)],
+		]
+		for q in quads:
+			draw_polygon(PackedVector2Array(q), PackedColorArray([solid, solid, clear, clear]))
 
 
 var w
@@ -63,6 +87,7 @@ var dev_lbl: RichTextLabel
 var dev_t := 0.0
 var honed_t := 0.0
 var death: Control
+var vignette: Vignette
 var region := -1
 
 
@@ -72,6 +97,12 @@ func _ready() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.theme = UiTheme.make()
 	add_child(root)
+
+	vignette = Vignette.new()
+	vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vignette.col = C.danger
+	root.add_child(vignette)
 
 	# Death veil
 	death = ColorRect.new()
@@ -260,7 +291,7 @@ func rebuild_spells() -> void:
 		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		col.add_child(_label("%d · %s" % [i + 1, Game.spell_name(s)], 16, C.ink))
 		var next := "Fully written" if s.lvl >= mx else "evolves at Lv %d" % mini(mx, (int(s.lvl / 4.0) + 1) * 4)
-		col.add_child(_label("Lv %d/%d · %s · %d dmg · %d mana · %s" % [s.lvl, mx, GameData.KIND_LABEL[st.kind], roundi(st.dmg), roundi(st.mana), next], 12, C.ink_soft, HORIZONTAL_ALIGNMENT_LEFT, true))
+		col.add_child(_label("Lv %d/%d · %s · %d dmg · %d ink · read %.2fs · %s" % [s.lvl, mx, GameData.KIND_LABEL[st.kind], roundi(st.dmg), roundi(st.mana), float(st.read), next], 12, C.ink_soft, HORIZONTAL_ALIGNMENT_LEFT, true))
 		var pips := Pips.new()
 		pips.lvl = s.lvl
 		pips.max_lvl = mx
@@ -316,7 +347,7 @@ func _rebuild_castbar() -> void:
 		b.col = col
 		b.focus_mode = Control.FOCUS_NONE
 		b.add_theme_stylebox_override("normal", UiTheme.box(Color(C.paper, 0.85), col))
-		b.pressed.connect(w.cast.bind(i))
+		b.pressed.connect(func(): w.casting.turn_to(i))
 		castbar.add_child(b)
 		cast_btns.append(b)
 	last_page_btn = CastButton.new()
@@ -324,7 +355,6 @@ func _rebuild_castbar() -> void:
 	last_page_btn.col = C.gilt
 	last_page_btn.focus_mode = Control.FOCUS_NONE
 	last_page_btn.add_theme_stylebox_override("normal", UiTheme.box(Color(C.paper, 0.85), C.gilt, 2))
-	last_page_btn.pressed.connect(w.cast.bind(3))
 	last_page_btn.visible = false
 	castbar.add_child(last_page_btn)
 	book_btn = Button.new()
@@ -356,15 +386,18 @@ func refresh(dt: float) -> void:
 	status_lbl.text = " · ".join(bits)
 
 	var free_cast: bool = ch.aspect.awakened and ch.aspect.id == "stillness" and p.still > 0.4
+	var cs = w.casting
 	for i in cast_btns.size():
 		var b: CastButton = cast_btns[i]
 		var st: Dictionary = _slot_stats(i)
-		b.cd = maxf(0.0, w.cds[i] / st.cd)
+		b.open = i == cs.page
+		b.cd = cs.progress() if cs.reading and cs.slot == i else (1.0 - cs.turn_t / maxf(0.01, cs.turn_time()) if cs.turn_target == i else 0.0)
 		b.modulate.a = 1.0 if free_cast or p.mana >= st.mana else 0.55
 		b.queue_redraw()
 	last_page_btn.visible = w.last_page_ready()
-	last_page_btn.cd = maxf(0.0, w.cds[3] / 12.0)
 	last_page_btn.queue_redraw()
+	vignette.amount = 0.35 * cs.strain_t / float(GameData.OVERCAST.strain_time)
+	vignette.queue_redraw()
 
 	var rd: float = p.position.length()
 	var reg := 0

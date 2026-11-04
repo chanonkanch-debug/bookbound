@@ -1,15 +1,19 @@
 extends Node
 ## Balance bot: `godot --headless --path . -- --balance`
-## Plays the bare-hands phase with five scripted playstyles, several runs each,
-## and prints how fast each style levels, how often it dies, and what book odds
-## it ends up with. Use it after changing numbers in game_data.gd to check that
-## every style can reach the ceremony at a similar pace.
 ##
-## Add `--runs=N` to change the number of runs per style (default 8).
+## Part 1 (bare hands): plays the bare-hands phase with five scripted playstyles and
+##   prints how fast each reaches the ceremony, how often it dies, and its book odds.
+## Part 2 (books): plays every element and thickness in each of the 3 regions, casting
+##   through the real read and page-turn rules, and prints how long each takes to earn
+##   the same amount of XP there. Every book should be within ±20% of the region average.
+## Part 3 (`--chapters`): how fast each hidden-chapter trigger progresses, to check the
+##   chapters still unlock in about the same play time.
+##
+## Options: `--runs=N` runs per case (default 3), `--signals` shows raw playstyle signals,
+## `--only=books` / `--only=bare` / `--only=chapters` runs one part.
 
 const World := preload("res://scripts/world/world.gd")
 const DT := 1.0 / 30.0
-const MAX_TIME := 900.0   # give up after 15 simulated minutes
 
 const STYLES := {
 	"brawler": "locks onto one enemy and jabs it down (Escalate)",
@@ -20,19 +24,52 @@ const STYLES := {
 	"mixed": "switches between all of the above every few seconds",
 }
 
+## The book test: level, where to stand, and how much XP to earn in each region.
+const REGION_TESTS := [
+	{"name": "Inkling Fields", "level": 5, "radius": 400.0, "xp": 150, "max_time": 900.0},
+	{"name": "Blot Marsh", "level": 8, "radius": 850.0, "xp": 240, "max_time": 900.0},
+	{"name": "Knight's Reach", "level": 11, "radius": 1280.0, "xp": 375, "max_time": 900.0},
+]
+
 var focus_target = null
 var last_target = null
 var orbit_dir := 1.0
 var mixed_style := "brawler"
 var mixed_t := 0.0
+var want := -1             # the page/stance the bot wants to use this frame (-1 = none)
+var want_aim = null
+var want_charge := 0.0     # 0..1 how much to overcharge
+var retreating := false
+var home := Vector2.ZERO
+var fight_t := 0.0
+var fights: Array = []
+var lull := 0.0
+var only_el := ""          # `--el=fire` tests just one element (lets you run elements in parallel)
 
 
 func run() -> void:
-	var runs := 8
+	var runs := 3
+	var only := ""
 	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--el="):
+			only_el = a.substr(5)
 		if a.begins_with("--runs="):
 			runs = int(a.substr(7))
-	print("\n=== Bookbound balance bot: %d runs per style, ceremony at Lv %d ===" % [runs, GameData.CEREMONY_LEVEL])
+		if a.begins_with("--only="):
+			only = a.substr(7)
+	if only == "" or only == "bare":
+		await _bare_part(runs)
+	if only == "" or only == "books":
+		await _book_part(runs)
+	if only == "chapters" or "--chapters" in OS.get_cmdline_user_args():
+		await _chapter_part()
+	print("\n=== done ===")
+
+
+# ================================================================ Part 1: bare hands
+
+func _bare_part(runs: int) -> void:
+	print("\n=== Bare hands: %d runs per style, ceremony at Lv %d ===" % [runs, GameData.CEREMONY_LEVEL])
 	for style in STYLES:
 		var times: Array = []
 		var deaths := 0
@@ -41,7 +78,7 @@ func run() -> void:
 		var hits := {}
 		var sig_sum := {}
 		for r in runs:
-			var res: Dictionary = await _play(style)
+			var res: Dictionary = await _play_bare(style)
 			times.append(res.time)
 			deaths += res.deaths
 			for k in res.odds:
@@ -67,7 +104,6 @@ func run() -> void:
 			for k in GameData.SIGNALS:
 				bits.append("%s %d" % [k, roundi(sig_sum.get(k, 0.0))])
 			print("  avg signals: %s" % ", ".join(bits))
-	print("\n=== done ===")
 
 
 func _fmt(d: Dictionary) -> String:
@@ -77,20 +113,31 @@ func _fmt(d: Dictionary) -> String:
 	return ", ".join(bits)
 
 
-func _play(style: String) -> Dictionary:
-	Game.ch = Game.new_character("Bot", "orphan")
+func _new_world():
 	var w = World.new()
 	add_child(w)
 	await get_tree().process_frame
 	w.set_process(false)
+	return w
+
+
+func _play_bare(style: String) -> Dictionary:
+	Game.ch = Game.new_character("Bot", "orphan")
+	var w = await _new_world()
 	w.player.position = Vector2(0, 200)
 	focus_target = null
 	last_target = null
+	retreating = false
 	var t := 0.0
 	var deaths := 0
 	var was_dead := false
-	while t < MAX_TIME and int(Game.ch.level) < GameData.CEREMONY_LEVEL:
-		_think(w, style)
+	var max_time := 1800.0
+	while t < max_time and int(Game.ch.level) < GameData.CEREMONY_LEVEL:
+		want = -1
+		want_aim = null
+		want_charge = 0.0
+		_think_bare(w, style)
+		_apply(w)
 		w._update(DT)
 		t += DT
 		var dead: bool = w.player.dead_t > 0.0
@@ -118,11 +165,49 @@ func _norm(d: Dictionary) -> Dictionary:
 	return out
 
 
-## One decision per frame: where to move and which move to use.
-func _think(w, style: String) -> void:
+## Turns "I want to use page i at this spot" into key presses, through the real rules:
+## turn the page first, hold the read key for the read time (plus any overcharge), release.
+func _apply(w) -> void:
+	var cs = w.casting
+	if want_aim != null:
+		w.bot_aim = want_aim
+	if cs.reading:
+		var need: float = float(cs.st.read) + float(cs.st.get("over", 0.0)) * want_charge
+		w.read_held = cs.t < need
+		return
+	if want < 0:
+		w.read_held = false
+		return
+	if cs.page != want or cs.turning():
+		cs.turn_to(want)
+		w.read_held = false
+		return
+	# Let go for a frame between casts so the next one starts fresh.
+	w.read_held = not w.read_held if cs.recover_t <= 0.0 else false
+
+
+## Heads home to the Hearth when hurt or out of ink, like a sensible player.
+func _should_retreat(w) -> bool:
+	var p = w.player
+	var hp_f: float = p.hp / Game.max_hp()
+	var ink_f: float = p.mana / Game.max_mana()
+	if retreating:
+		if hp_f > 0.95 and ink_f > 0.9:
+			retreating = false
+	elif hp_f < 0.35 or (ink_f < 0.08 and hp_f < 0.6):
+		retreating = true
+	return retreating
+
+
+func _think_bare(w, style: String) -> void:
 	var p = w.player
 	if p.dead_t > 0.0:
 		p.steer = Vector2.ZERO
+		return
+	if _should_retreat(w):
+		p.steer = -p.position.normalized() if p.position.length() > 60.0 else Vector2.ZERO
+		if style == "skirmisher":
+			want = 2
 		return
 	var near = w.nearest(p.position, 2000.0)
 	if near == null:
@@ -130,62 +215,427 @@ func _think(w, style: String) -> void:
 		return
 	var to: Vector2 = near.position - p.position
 	var d := to.length()
-	# Everyone heads back to heal when low, like a sensible player.
-	if p.hp / Game.max_hp() < 0.3:
-		p.steer = -p.position.normalized()
-		if style == "skirmisher":
-			w.cast(2)
-		return
 	if style == "mixed":
 		mixed_t -= DT
 		if mixed_t <= 0.0:
 			mixed_t = randf_range(3.0, 7.0)
 			mixed_style = ["brawler", "spreader", "controller", "skirmisher", "anchor"].pick_random()
 		style = mixed_style
+	if style != "anchor" and _dodge(w):   # anchors stand their ground and take the hit
+		return
+	want_aim = near.position
 	match style:
 		"brawler":
-			if focus_target == null or focus_target.dead or not is_instance_valid(focus_target):
+			if focus_target == null or not is_instance_valid(focus_target) or focus_target.dead:
 				focus_target = near
 			var ft: Vector2 = focus_target.position - p.position
-			p.steer = ft.normalized() if ft.length() > 40.0 else Vector2.ZERO
+			p.steer = ft.normalized() if ft.length() > 55.0 else Vector2.ZERO
+			want_aim = focus_target.position
 			if ft.length() < 70.0:
-				w.cast(0, focus_target)
+				want = 0
 		"spreader":
-			var pick = near
-			if last_target != null and is_instance_valid(last_target) and pick == last_target:
-				var other = w.nearest(p.position, 160.0, [last_target])
-				if other != null:
-					pick = other
-			var pt: Vector2 = pick.position - p.position
-			p.steer = pt.normalized() if pt.length() > 40.0 else Vector2.ZERO
-			if pt.length() < 70.0 and w.cds[0] <= 0.0:
-				last_target = pick
-				w.cast(0, pick)
+			# Keep the same pick for the whole read; switch to another enemy for the next one.
+			if not w.casting.reading or focus_target == null or not is_instance_valid(focus_target) or focus_target.dead:
+				var pick = near
+				if last_target != null and is_instance_valid(last_target) and pick == last_target:
+					var other = w.nearest(p.position, 160.0, [last_target])
+					if other != null:
+						pick = other
+				focus_target = pick
+			var pt: Vector2 = focus_target.position - p.position
+			p.steer = pt.normalized() if pt.length() > 55.0 else Vector2.ZERO
+			want_aim = focus_target.position
+			if pt.length() < 70.0:
+				want = 0
+			if w.casting.reading:
+				last_target = focus_target
 		"controller":
-			if d < 80.0:
-				w.cast(1)
 			if d < 60.0:
 				p.steer = -to.normalized()
 			elif d > 90.0:
 				p.steer = to.normalized()
 			else:
 				p.steer = Vector2.ZERO
-				w.cast(0)
-			if d < 70.0:
-				w.cast(0)
+			if d < 80.0:
+				want = 1 if p.mana >= 4.0 else 0
 		"skirmisher":
 			var side := Vector2(-to.y, to.x).normalized() * orbit_dir
 			p.steer = (side + to.normalized() * (0.6 if d > 60.0 else -0.4)).normalized()
-			if d < 70.0:
-				w.cast(0)
-			if d < 140.0 and w.cds[2] <= 0.0:
-				p.facing = to.normalized()
-				w.cast(2)
+			if d < 140.0 and p.mana >= 3.0 and randf() < 0.03:
+				want = 2
 				orbit_dir = -orbit_dir
+			elif d < 70.0:
+				want = 0
 		"anchor":
 			if d > 130.0:
 				p.steer = to.normalized()
 			else:
 				p.steer = Vector2.ZERO
 				if d < 70.0:
-					w.cast(0)
+					want = 0
+
+
+## Steps out of the way of a monster that is winding up near you. Returns true if dodging.
+func _dodge(w) -> bool:
+	var p = w.player
+	for e in w.enemies:
+		if e.dead or not e.winding_up():
+			continue
+		var to: Vector2 = p.position - e.position
+		var gap: float = to.length() - e.r - p.r
+		var f: Dictionary = e.f
+		match e.behavior:
+			"charge":
+				var lane: float = absf(e.lunge.cross(to))
+				if gap < float(f.charge_speed) * float(f.charge_time) + 20.0 and lane < e.r + p.r + 12.0 and e.lunge.dot(to) > 0.0:
+					p.steer = Vector2(-e.lunge.y, e.lunge.x) * (1.0 if e.lunge.cross(to) >= 0.0 else -1.0)
+					return true
+			_:
+				if gap < float(f.reach) + 22.0:
+					p.steer = to.normalized()
+					return true
+	return false
+
+
+# ================================================================ Part 2: books
+
+func _book_part(runs: int) -> void:
+	print("\n=== Books: seconds to earn the same XP in each region (%d runs each, Mira along) ===" % runs)
+	print("Read and page-turn rules apply. ! marks a book more than 20%% off the region average.\n")
+	var rows := {}
+	var fight_lens: Array = [[], [], []]
+	for el in Game.ELS:
+		if only_el != "" and el != only_el:
+			continue
+		for th in GameData.THICKNESS:
+			var key: String = "%s %s" % [el, th]
+			rows[key] = []
+			for ri in REGION_TESTS.size():
+				var tsum := 0.0
+				var dsum := 0.0
+				var csum := 0.0
+				var osum := 0.0
+				for r in runs:
+					var res: Dictionary = await _play_book(el, th, ri)
+					tsum += res.time / runs
+					dsum += float(res.deaths) / runs
+					csum += float(res.casts) / runs
+					osum += float(res.overcasts) / runs
+					fight_lens[ri].append_array(res.fights)
+				rows[key].append({"time": tsum, "deaths": dsum, "casts": csum, "overcasts": osum})
+	var means: Array = []
+	for ri in REGION_TESTS.size():
+		var m := 0.0
+		for key in rows:
+			m += rows[key][ri].time / rows.size()
+		means.append(m)
+	var head := "%-18s" % "book"
+	for rt in REGION_TESTS:
+		head += "| %-26s" % ("%s (Lv %d)" % [rt.name, rt.level])
+	print(head)
+	var worst := 0.0
+	for key in rows:
+		var line := "%-18s" % key
+		for ri in REGION_TESTS.size():
+			var c: Dictionary = rows[key][ri]
+			var rel: float = c.time / means[ri] - 1.0
+			worst = maxf(worst, absf(rel))
+			line += "| %4ds %+4d%%%s deaths %.1f  " % [roundi(c.time), roundi(rel * 100.0), "!" if absf(rel) > 0.2 else " ", c.deaths]
+		print(line)
+	var avg := "%-18s" % "average"
+	for ri in REGION_TESTS.size():
+		avg += "| %4ds                      " % roundi(means[ri])
+	print(avg)
+	print("\nWidest gap from the region average: %d%% (goal: within 20%%)" % roundi(worst * 100.0))
+	for ri in REGION_TESTS.size():
+		var fl: Array = fight_lens[ri]
+		fl.sort()
+		if fl.is_empty():
+			continue
+		var s := 0.0
+		for x in fl:
+			s += x / fl.size()
+		print("Fight length in %s: median %ds, average %ds (%d fights)" % [REGION_TESTS[ri].name, roundi(fl[fl.size() / 2]), roundi(s), fl.size()])
+
+
+## One run: a character with this book at the region's level, fighting there
+## until they earn the region's XP target.
+func _play_book(el: String, th: String, ri: int) -> Dictionary:
+	var rt: Dictionary = REGION_TESTS[ri]
+	var c := Game.new_character("Bot", "orphan")
+	c.el = el
+	c.thick = th
+	c.level = rt.level
+	var n: int = GameData.THICKNESS[th].slots
+	var idx: Array = [0] if n == 1 else ([0, 1, 2] if n == 3 else [0, [1, 2].pick_random()])
+	c.spells = []
+	for i in idx:
+		c.spells.append({"i": i, "lvl": 1})
+	c.aspect = {"id": "stillness", "progress": 0, "stage": 0, "awakened": false, "margins": [], "need": 99999, "streak": 99}
+	# Spend all the writing ink a player would have by now, evenly.
+	var ink: int = GameData.INK_PER_LEVEL * (int(rt.level) - 1)
+	var mx: int = GameData.THICKNESS[th].max_level
+	while ink > 0:
+		var low = null
+		for s in c.spells:
+			if s.lvl < mx and (low == null or s.lvl < low.lvl):
+				low = s
+		if low == null:
+			break
+		low.lvl += 1
+		ink -= 1
+	Game.ch = c
+	var w = await _new_world()
+	home = Vector2.from_angle(randf() * TAU) * float(rt.radius)
+	w.player.position = home
+	for e in w.enemies:
+		e.queue_free()
+	w.enemies.clear()
+	for k in int(GameData.MONSTERS.initial):
+		w.spawn(false)
+	retreating = false
+	fights = []
+	fight_t = 0.0
+	var t := 0.0
+	var deaths := 0
+	var overcasts := 0
+	var was_dead := false
+	var xp0: int = _total_xp(c)
+	var cs = w.casting
+	while t < float(rt.max_time) and _total_xp(c) - xp0 < int(rt.xp):
+		want = -1
+		want_aim = null
+		want_charge = 0.0
+		var strain_before: float = cs.strain_t
+		_think_book(w)
+		_apply(w)
+		w._update(DT)
+		if cs.strain_t > strain_before + 0.5:
+			overcasts += 1
+		_track_fight(w)
+		t += DT
+		var dead: bool = w.player.dead_t > 0.0
+		if dead and not was_dead:
+			deaths += 1
+		was_dead = dead
+	var res := {"time": t, "deaths": deaths, "casts": cs.casts, "overcasts": overcasts, "fights": fights.duplicate()}
+	w.queue_free()
+	await get_tree().process_frame
+	Game.delete_save()
+	return res
+
+
+## XP including levels already gained, so leveling up mid-run doesn't reset the count.
+func _total_xp(c: Dictionary) -> int:
+	var total := int(c.xp)
+	for l in range(1, int(c.level)):
+		total += Game.xp_next(l)
+	return total
+
+
+## A "fight" lasts while a hunting monster is within 300 px of you, and only ends
+## after 5 s without one (so a short step back doesn't split one fight into two).
+func _track_fight(w) -> void:
+	var p = w.player
+	var engaged := false
+	if p.dead_t <= 0.0:
+		for e in w.enemies:
+			if not e.dead and e.aggro and e.position.distance_to(p.position) < 300.0:
+				engaged = true
+				break
+	if engaged:
+		fight_t += DT + lull
+		lull = 0.0
+	elif fight_t > 0.0:
+		lull += DT
+		if lull > 5.0:
+			if fight_t > 3.0:
+				fights.append(fight_t)
+			fight_t = 0.0
+			lull = 0.0
+
+
+## The book bot: picks the page that does the most damage per second of reading
+## (counting page turns), keeps a sensible distance, dodges wind-ups, overcharges
+## when nothing is close, and walks home when hurt or dry.
+func _think_book(w) -> void:
+	var p = w.player
+	var cs = w.casting
+	if p.dead_t > 0.0:
+		p.steer = Vector2.ZERO
+		return
+	if _should_retreat(w):
+		p.steer = -p.position.normalized() if p.position.length() > 60.0 else Vector2.ZERO
+		return
+	var near = w.nearest(p.position, 700.0)
+	if near == null:
+		var to_home: Vector2 = home - p.position
+		p.steer = to_home.normalized() if to_home.length() > 40.0 else Vector2.ZERO
+		return
+	var dodging := _dodge(w)
+	var d: float = p.position.distance_to(near.position)
+	# Score every page: expected damage / (read + turn time).
+	var best: int = cs.page
+	var best_v := -1.0
+	var best_aim: Vector2 = near.position
+	for i in w.ch.spells.size():
+		var st: Dictionary = cs.stats_for(i)
+		var turns: int = absi(i - (cs.turn_target if cs.turning() else cs.page))
+		var cost_t: float = float(st.read) + float(GameData.READ.recover) + turns * float(GameData.PAGES.turn_time[w.ch.thick])
+		var ev := _expected(w, st, near)
+		var v: float = ev[0] / cost_t
+		if v > best_v:
+			best_v = v
+			best = i
+			best_aim = ev[1]
+	var st_b: Dictionary = cs.stats_for(best)
+	var gap: float = d - near.r - p.r
+	if not dodging:
+		var pref := 170.0
+		match st_b.kind:
+			"nova":
+				pref = float(st_b.radius) * 0.55
+			"dash":
+				pref = float(st_b.dash_len) * 0.6
+			"zone":
+				pref = minf(150.0, float(st_b.range) * 0.7)
+		if cs.reading:
+			p.steer = Vector2.ZERO
+		elif d > pref + 25.0:
+			p.steer = (near.position - p.position).normalized()
+		elif d < pref - 35.0 and st_b.kind != "nova":
+			p.steer = (p.position - near.position).normalized()
+		else:
+			p.steer = Vector2.ZERO
+	if best_v <= 0.0:
+		return
+	var affordable: bool = p.mana >= float(st_b.mana) or p.hp / Game.max_hp() > 0.7
+	if not affordable:
+		return
+	want = best
+	want_aim = best_aim
+	want_charge = 1.0 if gap > 140.0 and not dodging else 0.0
+
+
+## [expected damage, aim point] for casting `st` now, aimed at or around `near`.
+func _expected(w, st: Dictionary, near) -> Array:
+	var p = w.player
+	var d: float = p.position.distance_to(near.position)
+	var tier: int = int(st.get("tier", 0))
+	var dmg: float = float(st.dmg)
+	match st.kind:
+		"bolt":
+			var reach: float = float(st.speed) * float(st.get("life", 1.1))
+			if d > reach * 0.9:
+				return [0.0, near.position]
+			var n := 5 if tier >= 2 else (3 if tier >= 1 else 1)
+			var hits_n: float = 1.0 + 0.35 * (n - 1) * (1.0 if d < 120.0 else 0.4)
+			return [dmg * hits_n, near.position]
+		"chain":
+			if d > float(st.range):
+				return [0.0, near.position]
+			var cl := _count_near(w, near.position, 170.0)
+			return [dmg * (1.0 + 0.8 * minf(cl - 1, int(st.jumps) + 2 * tier)), near.position]
+		"nova":
+			var r: float = float(st.radius) * (1.0 + 0.25 * tier)
+			var cnt := _count_near(w, p.position, r * 0.9)
+			if cnt == 0:
+				return [0.0, near.position]
+			return [dmg * cnt * (2.0 if tier >= 3 else 1.0), near.position]
+		"zone":
+			if d > float(st.range) + 40.0:
+				return [0.0, near.position]
+			for z in w.zones:
+				if z.src == "player" and z.p.distance_to(near.position) < z.r:
+					return [0.0, near.position]
+			var r: float = float(st.radius) * (1.0 + 0.15 * tier)
+			var cnt := _count_near(w, near.position, r)
+			var ticks: float = float(st.dur) * (1.0 + 0.3 * tier) / float(st.get("tick", 0.5))
+			return [dmg * cnt * ticks * 0.45, near.position]
+		"dash":
+			if d > float(st.dash_len):
+				return [0.0, near.position]
+			return [dmg * _count_near(w, near.position, 50.0), near.position + (near.position - p.position).normalized() * 30.0]
+	return [0.0, near.position]
+
+
+func _count_near(w, at: Vector2, r: float) -> int:
+	var n := 0
+	for e in w.enemies:
+		if not e.dead and e.position.distance_to(at) < r + e.r:
+			n += 1
+	return n
+
+
+# ================================================================ Part 3: hidden chapters
+
+## How many trigger events per minute each hidden chapter gets with the book bot in
+## Inkling Fields and Blot Marsh. Compare with the numbers in docs/DESIGN_NOTES.md.
+func _chapter_part() -> void:
+	print("\n=== Hidden chapter trigger rates (events per minute, book bot, 5 min each) ===")
+	for el in Game.ELS:
+		for th in ["thin", "thick"]:
+			var res := await _play_rates(el, th)
+			print("%-16s %s" % ["%s %s" % [el, th], res])
+
+
+func _play_rates(el: String, th: String) -> Dictionary:
+	var c := Game.new_character("Bot", "orphan")
+	c.el = el
+	c.thick = th
+	c.level = 6
+	var n: int = GameData.THICKNESS[th].slots
+	c.spells = []
+	for i in n:
+		c.spells.append({"i": i, "lvl": 3 if n > 1 else 6})
+	c.aspect = {"id": "stillness", "progress": 0, "stage": 0, "awakened": false, "margins": [], "need": 99999, "streak": 99}
+	Game.ch = c
+	var w = await _new_world()
+	home = Vector2(0, 400)
+	w.player.position = home
+	retreating = false
+	var cs = w.casting
+	var t := 0.0
+	var T := 300.0
+	var still_casts := 0
+	var streak_kills := 0
+	var echo_kills := 0
+	var recovers := 0
+	var kills := 0
+	var low := false
+	var hunger_streak: int = int(GameData.CHAPTER_TUNING.hunger_streak)
+	while t < T:
+		want = -1
+		want_aim = null
+		want_charge = 0.0
+		_think_book(w)
+		_apply(w)
+		var was_still: bool = w.player.still > 0.4
+		var casts_before: int = cs.casts
+		var pre := {}
+		for e in w.enemies:
+			pre[e] = [e.ally_hit > 0.0, w.streak]
+		w._update(DT)
+		if cs.casts > casts_before and was_still:
+			still_casts += 1
+		for e in pre:
+			if is_instance_valid(e) and e.dead:
+				kills += 1
+				if pre[e][1] >= hunger_streak:
+					streak_kills += 1
+				if pre[e][0]:
+					echo_kills += 1
+		var f: float = w.player.hp / Game.max_hp()
+		if f < 0.25:
+			low = true
+		elif low and f > 0.6:
+			low = false
+			recovers += 1
+		t += DT
+	w.queue_free()
+	await get_tree().process_frame
+	Game.delete_save()
+	var m := T / 60.0
+	return {"casts": snappedf(cs.casts / m, 0.1), "still_casts": snappedf(still_casts / m, 0.1),
+		"kills": snappedf(kills / m, 0.1), "streak_kills": snappedf(streak_kills / m, 0.1),
+		"echo_kills": snappedf(echo_kills / m, 0.1), "recovers": snappedf(recovers / m, 0.01)}
