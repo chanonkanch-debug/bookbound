@@ -14,6 +14,7 @@ var heat_t := 0.0
 var hurt_t := 0.0
 var low := false
 var dead_t := 0.0
+var steer := Vector2.ZERO   # set by the balance bot (and later by network input) instead of the keyboard
 
 
 func _ready() -> void:
@@ -36,12 +37,16 @@ func tick(dt: float) -> void:
 		return
 
 	var mv := Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	if steer != Vector2.ZERO:
+		mv = steer
 	if w.pointer_down:
 		var to := get_global_mouse_position() - position
 		if to.length() > 10.0:
 			mv = to.normalized()
 	if mv.length() > 0.01:
 		var spd := 170.0 * (1.2 if ch.el == "wind" else 1.0)
+		if w.chased and not Game.has_book():
+			spd *= 1.0 + float(GameData.STANCES.moving_speed)
 		facing = mv.normalized()
 		position += facing * spd * dt
 		still = 0.0

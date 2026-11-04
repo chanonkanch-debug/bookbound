@@ -61,6 +61,7 @@ var new_armed := false
 var dev_box: VBoxContainer
 var dev_lbl: RichTextLabel
 var dev_t := 0.0
+var honed_t := 0.0
 var death: Control
 var region := -1
 
@@ -248,6 +249,7 @@ func rebuild_spells() -> void:
 	ink_lbl.text = "Ink %d" % ch.ink
 	if not Game.has_book():
 		_rebuild_bare_hands()
+		_rebuild_castbar()
 		return
 	var mx := Game.max_spell_level()
 	for i in ch.spells.size():
@@ -278,16 +280,20 @@ func rebuild_spells() -> void:
 
 ## Before the ceremony: list the bare-hands moves. Ink is saved for later.
 func _rebuild_bare_hands() -> void:
+	for c in spell_box.get_children():
+		c.queue_free()
 	ink_lbl.text = "Ink %d (saved)" % w.ch.ink
 	for i in GameData.BARE_HANDS.size():
 		var st: Dictionary = Game.bare_stats(i)
 		var col := VBoxContainer.new()
 		col.add_child(_label("%d · %s" % [i + 1, st.name], 16, C.ink))
 		var cost := "free" if float(st.mana) <= 0.0 else "%d mana" % roundi(st.mana)
-		col.add_child(_label("%s · %d dmg · %s" % [st.get("label", GameData.KIND_LABEL[st.kind]), roundi(st.dmg), cost], 12, C.ink_soft, HORIZONTAL_ALIGNMENT_LEFT, true))
+		var honed := ""
+		if float(st.mastery) >= 0.01:
+			honed = " · honed +%d%%" % roundi(100.0 * float(st.mastery))
+		col.add_child(_label("%s · %d dmg · %s%s" % [st.get("label", GameData.KIND_LABEL[st.kind]), roundi(st.dmg), cost, honed], 12, C.ink_soft, HORIZONTAL_ALIGNMENT_LEFT, true))
 		spell_box.add_child(col)
-	spell_box.add_child(_label("Your ink waits for the book you'll receive at the ceremony.", 12, C.ink_soft, HORIZONTAL_ALIGNMENT_LEFT, true))
-	_rebuild_castbar()
+	spell_box.add_child(_label("Moves you favour grow honed. Your ink waits for the book you'll receive at the ceremony.", 12, C.ink_soft, HORIZONTAL_ALIGNMENT_LEFT, true))
 
 
 ## Stats for cast button i: a spell once you have a book, a bare-hands move before.
@@ -375,6 +381,10 @@ func refresh(dt: float) -> void:
 	if ceremony_lbl.visible:
 		ceremony_lbl.text = "Your Book Ceremony is ready. Return to the Hearth."
 
+	honed_t -= dt
+	if honed_t <= 0.0 and not Game.has_book():
+		honed_t = 1.0
+		_rebuild_bare_hands()   # honed bonuses change as you fight
 	dev_t -= dt
 	if dev_box.visible and dev_t <= 0.0:
 		dev_t = 0.3
@@ -461,17 +471,36 @@ func _refresh_dev() -> void:
 	]
 
 
-## Designer view before the ceremony: leaning points and the current book odds.
+## Designer view before the ceremony: playstyle signals and the current book odds.
 func _refresh_dev_lean() -> void:
+	var ch: Dictionary = w.ch
 	var soft: String = C.ink_soft.to_html(false)
-	var lean: Dictionary = w.ch.get("lean", {})
-	var weights := Game.element_weights(w.ch.bg, lean)
-	var total := 0.0
-	for k in weights:
-		total += weights[k]
+	var sc := Game.lean_scores(ch)
+	var ew := Game.element_weights(ch)
+	var tw := Game.thickness_weights(ch)
+	var etot := 0.0
+	for k in ew:
+		etot += ew[k]
+	var ttot := 0.0
+	for k in tw:
+		ttot += tw[k]
+	var sig: Dictionary = ch.get("signals", {})
+	var temper: Dictionary = ch.get("temper", {})
 	var lines: Array = []
-	for k in weights:
-		lines.append("[color=#%s]%s[/color]  %d pts · %d%%" % [
-			C[k].to_html(false), GameData.ELEMENTS[k].name, roundi(float(lean.get(k, 0.0))), roundi(100.0 * weights[k] / total)])
-	dev_lbl.text = "[color=#%s]SPOILERS. Players never see these numbers.[/color]\n\n[b]Leaning[/b] (points · book chance now)\n%s\n\n[color=#%s]Ceremony at Lv %d. Rules and strength are in LEAN in game_data.gd.[/color]" % [
-		soft, "\n".join(lines), soft, GameData.CEREMONY_LEVEL]
+	for k in Game.ELS:
+		var parts: Array = []
+		for sname in GameData.SIGNALS:
+			if GameData.SIGNALS[sname].el == k:
+				parts.append("%s %d" % [sname, roundi(float(sig.get(sname, 0.0)))])
+		lines.append("[color=#%s]%s[/color]  score %d · temper x%.2f · [b]%d%%[/b]\n   [color=#%s]%s[/color]" % [
+			C[k].to_html(false), GameData.ELEMENTS[k].name, roundi(sc[k]), float(temper.get(k, 1.0)),
+			roundi(100.0 * ew[k] / etot), soft, ", ".join(parts)])
+	var sh := Game.move_shares(ch)
+	var mv: Array = []
+	for m in sh:
+		mv.append("%s %d%%" % [m, roundi(100.0 * sh[m])])
+	var th: Array = []
+	for t in tw:
+		th.append("%s %d%%" % [t, roundi(100.0 * tw[t] / ttot)])
+	dev_lbl.text = "[color=#%s]SPOILERS. Players never see these numbers.[/color]\n\n[b]Book element[/b] (signals, score, chance now)\n%s\n\n[b]Thickness[/b]  %s\n[color=#%s]Moves %s · focus %.2f[/color]\n\n[color=#%s]Ceremony at Lv %d. Rules are in SIGNALS, LEAN and FOCUS in game_data.gd.[/color]" % [
+		soft, "\n".join(lines), ", ".join(th), soft, ", ".join(mv), Game.focus(ch), soft, GameData.CEREMONY_LEVEL]

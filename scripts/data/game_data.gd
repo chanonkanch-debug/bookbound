@@ -6,7 +6,7 @@ const TOWN_RADIUS := 160.0        # The Hearth: safe zone in the middle of the m
 const WORLD_RADIUS := 1500.0      # Edge of the world
 const INK_PER_LEVEL := 2          # Ink you get each level, spent to grow spells
 const MAX_ENEMIES_NEARBY := 16
-const CEREMONY_LEVEL := 3         # Level at which the Book Ceremony opens (walk into the Hearth)
+const CEREMONY_LEVEL := 5         # Level at which the Book Ceremony opens (walk into the Hearth)
 
 const COLORS := {
 	"paper": Color("e7eae1"),
@@ -89,8 +89,8 @@ const KIND_LABEL := {
 
 # ---------------------------------------------------------------- Bare hands
 # Everyone starts with no book. These are the moves you fight with until the ceremony.
-# Damage grows 15% per level. "life" is how long a bolt flies (short = melee reach).
-# "move" tells the world which leaning rule the hit counts for (see LEAN below).
+# Damage grows BARE_DMG_PER_LEVEL per level. "life" is how long a bolt flies (short = melee reach).
+# "move" tells the world which move made a hit, for the playstyle tracking below.
 const BARE_HANDS := [
 	{"name": "Jab", "move": "jab", "kind": "bolt", "label": "punch", "dmg": 9.0, "cd": 0.4, "mana": 0.0, "speed": 520.0, "life": 0.13},
 	{"name": "Shove", "move": "shove", "kind": "nova", "dmg": 6.0, "cd": 2.4, "mana": 8.0, "radius": 75.0, "push": 170.0},
@@ -98,33 +98,99 @@ const BARE_HANDS := [
 ]
 const BARE_DMG_PER_LEVEL := 0.15
 
-# ---------------------------------------------------------------- Leaning (how you fought before the ceremony)
-# While bare-handed, each fighting style quietly earns points toward an element:
-#   fire       Escalate: a Jab lands on the SAME enemy within combo_window of your last hit
-#   lightning  Chain:    a Jab lands on a DIFFERENT enemy within combo_window of your last hit
-#   water      Redirect: each enemy hit by Shove
-#   wind       Move:     each Sidestep used with an enemy within dash_near
-#   earth      Persist:  any hit landed after standing still for planted_time seconds
-# At the ceremony each element's weight is:
-#   1 + background bonus + strength * (that element's points / all points)
-# With strength 6, someone who only played one style gets that element about 60% of the time.
-# Set strength to 0 to make the book fully random again.
-const LEAN := {
-	"strength": 6.0,
-	"combo_window": 1.2,
-	"planted_time": 1.0,
-	"dash_near": 250.0,
+# Sticking with a style pays off. Each move gets up to MASTERY_MAX extra damage,
+# shared out by how much of your fighting time went into it. Someone who only jabs
+# gets the full bonus on Jab; someone who mixes all three gets a third on each.
+# Same total power either way, just like thin and thick books.
+const MASTERY_MAX := 0.45
+
+# Small built-in perks so every way of fighting can level at a similar pace.
+const STANCES := {
+	"planted_dmg": 0.5,       # hits after standing still for planted_time deal +50%
+	"moving_speed": 0.05,     # +5% move speed while an enemy is chasing you
+	"brink_dmg": 0.2,         # +20% damage while below brink_hp health
+	"planted_guard": 0.3,     # take 30% less damage while planted
 }
 
-# One vague journal line per element, shown at level-ups before the ceremony for
-# whichever element you lean toward most. Never show the numbers to players.
-const LEAN_HINTS := {
-	"fire": "Your fists remember the heat of a long combo.",
-	"water": "The way you push them back feels like a tide.",
-	"earth": "You stood your ground. The ground noticed.",
-	"wind": "Your feet are quicker than your hands. Something likes that.",
-	"lightning": "You jump from foe to foe like a spark looking for a path.",
+# ---------------------------------------------------------------- Playstyle (how you fought before the ceremony)
+# While bare-handed, the game quietly watches HOW you fight, not which button you press.
+# Every move can feed any element depending on the situation. Each "signal" below
+# belongs to one element. Its raw count is softened with ^LEAN.power, so repeating
+# one trick gives less and less, while living a whole style (all of its signals) counts most.
+#
+#   fire       Escalate  chain        3rd+ hit in a row on the same enemy, each within combo_window,
+#                                     while pressing in (not planted)
+#                        streak_kill  a kill while on a streak of streak_kills+
+#                        brink        a hit landed while below brink_hp health
+#   water      Redirect  push         an enemy shoved away
+#                        repel        a Shove used while an enemy is within repel_range
+#                        clean_kill   a kill on an enemy that never hurt you
+#   earth      Persist   planted      a hit landed after standing still for planted_time
+#                        absorb       every 10 damage taken while standing your ground
+#                        crowd        a hit landed with crowd_count+ enemies around you
+#   wind       Move      moving_hit   a hit landed while moving
+#                        slip         a Sidestep used with an enemy within dash_near
+#                        kite         every kite_step pixels moved away from or around a chasing enemy
+#   lightning  Chain     spread       a hit while you've struck spread_count+ different enemies in spread_window s
+#                        multi        each extra enemy caught by one Shove or Sidestep
+#                        snap         a Jab on a different enemy within snap_window s of your last hit,
+#                                     while that last one is still standing
+#
+# "w" scales a signal so each one matters about equally for a committed player.
+const SIGNALS := {
+	"chain": {"el": "fire", "w": 1.4}, "streak_kill": {"el": "fire", "w": 1.5}, "brink": {"el": "fire", "w": 1.0},
+	"push": {"el": "water", "w": 1.3}, "repel": {"el": "water", "w": 2.5}, "clean_kill": {"el": "water", "w": 1.6},
+	"planted": {"el": "earth", "w": 0.8}, "absorb": {"el": "earth", "w": 1.6}, "crowd": {"el": "earth", "w": 1.0},
+	"moving_hit": {"el": "wind", "w": 0.8}, "slip": {"el": "wind", "w": 2.5}, "kite": {"el": "wind", "w": 1.0},
+	"spread": {"el": "lightning", "w": 0.6}, "multi": {"el": "lightning", "w": 2.0}, "snap": {"el": "lightning", "w": 3.5},
 }
+
+# How the ceremony turns your playstyle into odds. For each element:
+#   score  = sum over its signals of  w * count ^ power,  times your hidden temperament
+#   share  = score / all scores
+#   excess = how far share is above an even split (1/5), or 0
+#   weight = 1 + background bonus + strength * excess ^ sharpness
+# Only elements you lean toward MORE than average get a boost, so a clear style is
+# rewarded a lot and a mixed style stays close to even.
+# temperament is rolled once per character in [min, max] and never shown to players,
+# so two people who fight the same way can still drift apart. Set strength to 0 for pure luck.
+const LEAN := {
+	"strength": 120.0,
+	"sharpness": 1.5,
+	"power": 0.7,
+	"temperament": [0.75, 1.25],
+	"combo_window": 1.2,
+	"planted_time": 1.5,
+	"streak_kills": 5,
+	"spread_window": 3.0,
+	"spread_count": 3,
+	"brink_hp": 0.4,
+	"repel_range": 80.0,
+	"crowd_radius": 130.0,
+	"crowd_count": 3,
+	"dash_near": 250.0,
+	"chase_range": 220.0,
+	"kite_step": 200.0,
+	"snap_window": 0.6,
+}
+
+# Book thickness follows focus. Your fighting time on each move is compared:
+# one move only (focus 1) makes thin books likelier, an even mix (focus 0) makes thick likelier.
+#   thin weight  = THICKNESS.thin.chance  * (1 + strength * focus)
+#   thick weight = THICKNESS.thick.chance * (1 + strength * (1 - focus))
+const FOCUS := {"strength": 2.5}
+
+# Vague journal lines, shown at level-ups before the ceremony for the element you lean
+# toward most (a different line each level). Never show numbers to players.
+const LEAN_HINTS := {
+	"fire": ["Your fists remember the heat of a long combo.", "You don't let go once you start. Something warm approves.", "The air shimmers when you refuse to back off."],
+	"water": ["The way you push them back feels like a tide.", "You keep the fight at arm's length, like a current around a stone.", "They never quite reach you. Something cool approves."],
+	"earth": ["You stood your ground. The ground noticed.", "You took the hits and stayed. Something old and heavy approves.", "When they crowd you, you only grow steadier."],
+	"wind": ["Your feet are quicker than your hands. Something likes that.", "You never stand still long enough to be caught.", "A breeze follows you from fight to fight."],
+	"lightning": ["You jump from foe to foe like a spark looking for a path.", "They drop fast when you strike. The air crackles.", "You never hit the same thing twice if you can help it."],
+}
+const LEAN_TORN := "Two feelings pull at you, and neither will let go."
+const LEAN_UNSURE := "Nothing in you has chosen a shape yet."
 
 # ---------------------------------------------------------------- Backgrounds
 # Weights are added to a base of 1 per element, so nothing is ever impossible.

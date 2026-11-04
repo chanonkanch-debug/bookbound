@@ -34,25 +34,125 @@ func _setup_input() -> void:
 
 # ---------------------------------------------------------------- Rolling a book
 
-## Chance weight per element: 1 each, plus background bonus, plus how you
-## fought before the ceremony (see LEAN in game_data.gd).
-func element_weights(bg: String, lean: Dictionary = {}) -> Dictionary:
-	var w := {"fire": 1.0, "water": 1.0, "earth": 1.0, "wind": 1.0, "lightning": 1.0}
-	var bonus: Dictionary = GameData.BACKGROUNDS[bg].weights
+const ELS := ["fire", "water", "earth", "wind", "lightning"]
+
+
+## A fresh character with bare hands and no book yet.
+## "signals" counts playstyle signals, "use" counts fighting time per move, and
+## "temper" is the hidden temperament (see LEAN in game_data.gd).
+func new_character(char_name: String, bg: String) -> Dictionary:
+	var temper := {}
+	var tr: Array = GameData.LEAN.temperament
+	for k in ELS:
+		temper[k] = randf_range(tr[0], tr[1])
+	return {
+		"name": char_name if char_name != "" else "Arin", "bg": bg,
+		"el": "", "thick": "", "pages": 0, "spells": [],
+		"ink": 0, "level": 1, "xp": 0,
+		"aspect": {"id": "", "progress": 0, "stage": 0, "awakened": false, "margins": [], "need": 0, "streak": 0},
+		"signals": {}, "use": {}, "temper": temper,
+	}
+
+
+func has_book(c: Dictionary = ch) -> bool:
+	return String(c.get("el", "")) != ""
+
+
+## Playstyle score per element for a bare-handed character (see SIGNALS and
+## LEAN in game_data.gd). Includes the hidden temperament.
+func lean_scores(c: Dictionary = ch) -> Dictionary:
+	var out := {}
+	for k in ELS:
+		out[k] = 0.0
+	var sig: Dictionary = c.get("signals", {})
+	for sname in sig:
+		if not GameData.SIGNALS.has(sname):
+			continue
+		var d: Dictionary = GameData.SIGNALS[sname]
+		out[d.el] += float(d.w) * pow(maxf(0.0, float(sig[sname])), float(GameData.LEAN.power))
+	var temper: Dictionary = c.get("temper", {})
+	for k in ELS:
+		out[k] *= float(temper.get(k, 1.0))
+	return out
+
+
+## The element this character leans toward most so far ("" if none yet).
+func top_lean(c: Dictionary = ch) -> String:
+	var sc := lean_scores(c)
+	var best := ""
+	var bv := 0.0
+	for k in sc:
+		if sc[k] > bv:
+			bv = sc[k]
+			best = k
+	return best
+
+
+## True when the top two elements are close (within 15%), for the journal.
+func lean_torn(c: Dictionary = ch) -> bool:
+	var v: Array = lean_scores(c).values()
+	v.sort()
+	return v[-1] > 0.0 and v[-2] >= v[-1] * 0.85
+
+
+## Chance weight per element at the ceremony: 1 each, plus background bonus,
+## plus playstyle (strength * excess ^ sharpness, see LEAN in game_data.gd).
+func element_weights(c: Dictionary = ch) -> Dictionary:
+	var w := {}
+	for k in ELS:
+		w[k] = 1.0
+	var bonus: Dictionary = GameData.BACKGROUNDS[c.bg].weights
 	for k in bonus:
 		w[k] += float(bonus[k])
-	var lean_total := 0.0
-	for k in lean:
-		lean_total += float(lean[k])
-	if lean_total > 0.0:
-		for k in lean:
-			if w.has(k):
-				w[k] += float(GameData.LEAN.strength) * float(lean[k]) / lean_total
+	var sc := lean_scores(c)
+	var total := 0.0
+	for k in sc:
+		total += sc[k]
+	if total > 0.0:
+		var even := 1.0 / ELS.size()
+		for k in ELS:
+			var excess := maxf(0.0, sc[k] / total - even)
+			w[k] += float(GameData.LEAN.strength) * pow(excess, float(GameData.LEAN.sharpness))
 	return w
 
 
-func roll_element(bg: String, lean: Dictionary = {}) -> String:
-	var w := element_weights(bg, lean)
+## Share of fighting time spent on each bare-hands move (adds up to 1, or all 0 at the start).
+func move_shares(c: Dictionary = ch) -> Dictionary:
+	var use: Dictionary = c.get("use", {})
+	var total := 0.0
+	for k in use:
+		total += float(use[k])
+	var out := {}
+	for m in GameData.BARE_HANDS:
+		out[m.move] = float(use.get(m.move, 0.0)) / total if total > 0.0 else 0.0
+	return out
+
+
+## 0 = an even mix of all moves, 1 = one move only, 0.5 before any fighting.
+func focus(c: Dictionary = ch) -> float:
+	var sh := move_shares(c)
+	var n := float(sh.size())
+	var top := 0.0
+	for k in sh:
+		top = maxf(top, sh[k])
+	if top <= 0.0:
+		return 0.5
+	return clampf((top - 1.0 / n) / (1.0 - 1.0 / n), 0.0, 1.0)
+
+
+## Chance weight per thickness at the ceremony: focus tilts thin vs thick.
+func thickness_weights(c: Dictionary = ch) -> Dictionary:
+	var f := focus(c)
+	var k := float(GameData.FOCUS.strength)
+	var w := {}
+	for t in GameData.THICKNESS:
+		w[t] = float(GameData.THICKNESS[t].chance)
+	w.thin *= 1.0 + k * f
+	w.thick *= 1.0 + k * (1.0 - f)
+	return w
+
+
+func _pick(w: Dictionary) -> String:
 	var total := 0.0
 	for k in w:
 		total += w[k]
@@ -61,50 +161,13 @@ func roll_element(bg: String, lean: Dictionary = {}) -> String:
 		r -= w[k]
 		if r <= 0.0:
 			return k
-	return "fire"
-
-
-func roll_thickness() -> String:
-	var r := randf()
-	var acc := 0.0
-	for k in GameData.THICKNESS:
-		acc += float(GameData.THICKNESS[k].chance)
-		if r <= acc:
-			return k
-	return "medium"
-
-
-## A fresh character with bare hands and no book yet.
-func new_character(char_name: String, bg: String) -> Dictionary:
-	return {
-		"name": char_name if char_name != "" else "Arin", "bg": bg,
-		"el": "", "thick": "", "pages": 0, "spells": [],
-		"ink": 0, "level": 1, "xp": 0,
-		"aspect": {"id": "", "progress": 0, "stage": 0, "awakened": false, "margins": [], "need": 0, "streak": 0},
-		"lean": {"fire": 0.0, "water": 0.0, "earth": 0.0, "wind": 0.0, "lightning": 0.0},
-	}
-
-
-func has_book(c: Dictionary = ch) -> bool:
-	return String(c.get("el", "")) != ""
-
-
-## The element this character has leaned toward most so far ("" if none yet).
-func top_lean(c: Dictionary = ch) -> String:
-	var best := ""
-	var bv := 0.0
-	var lean: Dictionary = c.get("lean", {})
-	for k in lean:
-		if float(lean[k]) > bv:
-			bv = float(lean[k])
-			best = k
-	return best
+	return w.keys()[0]
 
 
 ## The Book Ceremony: rolls a book (weighted by background and leaning) into `c`.
 func bind_book(c: Dictionary) -> void:
-	var el := roll_element(c.bg, c.get("lean", {}))
-	var thick := roll_thickness()
+	var el := _pick(element_weights(c))
+	var thick := _pick(thickness_weights(c))
 	var t: Dictionary = GameData.THICKNESS[thick]
 	var spell_idx: Array = [0]
 	if thick == "medium":
@@ -150,7 +213,9 @@ func bare_stats(i: int) -> Dictionary:
 	var st: Dictionary = GameData.BARE_HANDS[i].duplicate()
 	st.el = "none"
 	st.tier = 0
-	st.dmg = float(st.dmg) * (1.0 + GameData.BARE_DMG_PER_LEVEL * (int(ch.level) - 1))
+	var mastery: float = GameData.MASTERY_MAX * float(move_shares().get(st.move, 0.0))
+	st.mastery = mastery
+	st.dmg = float(st.dmg) * (1.0 + GameData.BARE_DMG_PER_LEVEL * (int(ch.level) - 1)) * (1.0 + mastery)
 	return st
 
 

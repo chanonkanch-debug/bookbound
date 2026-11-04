@@ -2,8 +2,11 @@
 
 Every mage is bound to a grimoire. It decides how you fight, never how strong you are.
 
-You start with bare hands. At **Lv 3** you return to the Hearth for the **Book Ceremony**, where a
-random book chooses you. How you fought before the ceremony quietly tilts which element you get.
+You start with bare hands. At **Lv 5** you return to the Hearth for the **Book Ceremony**, where a
+random book chooses you. The game quietly watches *how* you fight until then (pressing one enemy,
+hopping between enemies, keeping them off, never standing still, or planting your feet) and that
+strongly tilts which element and thickness you get. A clear style gets its element most of the time;
+a mixed style stays close to even. Moves you favour also grow "honed", so sticking with a style pays.
 
 This is milestone 1: a single-player version of the browser prototype, built in Godot 4.
 It is set up so co-op multiplayer can be added next.
@@ -42,9 +45,9 @@ Open `scripts/data/game_data.gd` in Godot (double-click it in the FileSystem pan
 - Find `"Ember Bolt"` and change `"dmg": 14.0` to `"dmg": 40.0`.
 - Change `INK_PER_LEVEL := 2` to `5`.
 - Change the `"chance"` values under `THICKNESS` to make thin books rarer.
-- Change `CEREMONY_LEVEL := 3` to `1` to get your book almost straight away.
-- Change `"strength"` under `LEAN` to `0.0` to make the book fully random again, or `20.0` to make
-  your early fighting style almost decide it.
+- Change `CEREMONY_LEVEL := 5` to `2` to get your book almost straight away.
+- Change `"strength"` under `LEAN` to `0.0` to make the book fully random again, or `300.0` to make
+  your fighting style almost decide it.
 
 Press F5 again and play. That's the whole loop: change, play, repeat.
 
@@ -59,6 +62,7 @@ scripts/
   data/game_data.gd        ★ All numbers and text: elements, spells, books, monsters, hidden chapters
   game.gd                  Rolls books (with leaning), works out spell stats, saves and loads
   main.gd                  Switches between creation, the world and the ceremony; also the self-test
+  dev/balance.gd           The balance bot (see below)
   rite/rite_screen.gd      Character creation (name and background, bare hands)
   rite/ceremony_screen.gd  The Book Ceremony: the book reveal at Lv 3
   world/world.gd           The field: spawning, spells, damage, element combos, drawing effects
@@ -104,6 +108,19 @@ godot --path . -- --autotest
 
 If it prints `Autotest finished`, the game logic works end to end.
 
+### Balance bot
+
+To check that every playstyle levels at a similar pace and gets the book it should, run:
+
+```
+godot --headless --path . -- --balance
+```
+
+Five scripted players (brawler, spreader, controller, skirmisher, anchor) plus one that mixes
+everything each play the bare-hands phase several times. It prints how long each took to reach
+the ceremony, how often it died, and its book odds. Add `--signals` to see the raw playstyle
+signals, or `--runs=20` for more runs. Run it after changing numbers in game_data.gd.
+
 ---
 
 ## 5. Roadmap
@@ -119,6 +136,7 @@ If it prints `Autotest finished`, the game logic works end to end.
 
 - The book never changes how strong you are, only how you play.
 - Nobody picks their book. It's random at the ceremony, tilted by background and by how you fought
-  bare-handed. Players never see the leaning numbers (only the F1 designer view does).
+  bare-handed. Players never see the playstyle numbers (only the F1 designer view does).
+- Every playstyle should reach the ceremony at about the same pace. The balance bot checks this.
 - Every book has a hidden chapter. Players must find it; the game never tells them it exists.
 - Hidden chapter details (`ASPECTS` in game_data.gd, and hidden_chapter.gd) move to the server in milestone 4 so they can't be datamined.
