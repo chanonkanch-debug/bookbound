@@ -68,12 +68,13 @@ func winding_up() -> bool:
 
 
 ## Called by the world when a hit is hard enough (or pushes it): the strike is cancelled.
-func interrupt() -> void:
+func interrupt() -> bool:
 	if state != "windup":
-		return
+		return false
 	state = "stagger"
 	state_t = float(GameData.MONSTERS.stagger)
 	flash = 0.2
+	return true
 
 
 func tick(dt: float) -> void:
@@ -253,6 +254,13 @@ func _draw() -> void:
 	var eye := r * (0.2 + 0.08 * k)
 	draw_circle(look + Vector2(-r * 0.32, -r * 0.15), eye, C.paper)
 	draw_circle(look + Vector2(r * 0.32, -r * 0.15), eye, C.paper)
-	if hp < max_hp:
+	# No health bar: a hurt monster cracks and its ink thins.
+	var hurt := 1.0 - clampf(hp / max_hp, 0.0, 1.0)
+	if hurt > 0.15:
+		var n := int(hurt * 6.0)
+		for i in n:
+			var a0 := sd + i * 2.4
+			draw_line(lean + Vector2.from_angle(a0) * r * 0.25, lean + Vector2.from_angle(a0 + 0.35) * r * swell, Color(C.paper, 0.55), 1.2)
+	if Game.show_numbers() and hp < max_hp:
 		draw_rect(Rect2(-r, -r - 9.0, r * 2.0, 3.0), C.rule)
 		draw_rect(Rect2(-r, -r - 9.0, r * 2.0 * maxf(0.0, hp / max_hp), 3.0), C.danger)

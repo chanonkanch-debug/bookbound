@@ -1,0 +1,109 @@
+extends CanvasLayer
+## The journal (press J once it has appeared). Lines are written in the world's voice:
+## no numbers and no game terms. Text lives in JOURNAL in game_data.gd.
+## The bestiary at the bottom fills in as you learn how monsters react (Phase 3).
+
+const UiTheme := preload("res://scripts/ui/ui_theme.gd")
+
+var w
+var C: Dictionary = GameData.COLORS
+var list: VBoxContainer
+var beasts: VBoxContainer
+var beast_head: Label
+var new_btn: Button
+var new_armed := false
+
+
+func _ready() -> void:
+	layer = 10
+	visible = false
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.theme = UiTheme.make()
+	add_child(root)
+	var dim := ColorRect.new()
+	dim.color = Color(0.08, 0.1, 0.14, 0.45)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(center)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(560, 460)
+	center.add_child(panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	panel.add_child(v)
+	v.add_child(_label("%s's journal" % w.ch.name, 28, C.ink))
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(scroll)
+	var inner := VBoxContainer.new()
+	inner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inner.add_theme_constant_override("separation", 8)
+	scroll.add_child(inner)
+	list = VBoxContainer.new()
+	list.add_theme_constant_override("separation", 6)
+	inner.add_child(list)
+	beast_head = _label(GameData.BESTIARY_TITLE, 16, C.ink_soft)
+	inner.add_child(beast_head)
+	beasts = VBoxContainer.new()
+	inner.add_child(beasts)
+	var row := HBoxContainer.new()
+	new_btn = Button.new()
+	new_btn.text = GameData.GIVE_UP_TEXT
+	new_btn.focus_mode = Control.FOCUS_NONE
+	new_btn.pressed.connect(_on_new_pressed)
+	row.add_child(new_btn)
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(sp)
+	var close := Button.new()
+	close.text = "Close the journal"
+	close.theme_type_variation = "PrimaryButton"
+	close.focus_mode = Control.FOCUS_NONE
+	close.pressed.connect(close_journal)
+	row.add_child(close)
+	v.add_child(row)
+
+
+func _label(text: String, size: int, col: Color) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_color_override("font_color", col)
+	return l
+
+
+func open() -> void:
+	for c in list.get_children() + beasts.get_children():
+		c.queue_free()
+	var lines: Array = w.ch.get("journal", [])
+	if lines.is_empty():
+		list.add_child(_label("…", 15, C.ink_soft))
+	for i in range(lines.size() - 1, -1, -1):
+		list.add_child(_label(lines[i], 15, C.ink if i == lines.size() - 1 else C.ink_soft))
+	var known: Array = w.discovery.bestiary_lines() if w.get("discovery") != null else []
+	beast_head.visible = not known.is_empty()
+	for l in known:
+		beasts.add_child(_label(l, 14, C.ink))
+	visible = true
+	w.paused = true
+
+
+func close_journal() -> void:
+	visible = false
+	w.paused = false
+
+
+func _on_new_pressed() -> void:
+	if not new_armed:
+		new_armed = true
+		new_btn.text = GameData.GIVE_UP_CONFIRM
+		get_tree().create_timer(3.0).timeout.connect(func():
+			new_armed = false
+			new_btn.text = GameData.GIVE_UP_TEXT)
+		return
+	w.give_up_character()

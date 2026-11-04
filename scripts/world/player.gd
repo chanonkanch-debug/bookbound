@@ -99,8 +99,17 @@ func _draw() -> void:
 	var strain: float = w.casting.strain_t / float(GameData.OVERCAST.strain_time)
 	if strain > 0.0:
 		shake = Vector2(sin(w.time * 47.0), cos(w.time * 39.0)) * 1.5 * strain
-	draw_circle(shake, r, C.danger if hurt_t > 0.0 else el_c)
-	draw_arc(shake, r, 0, TAU, 32, C.ink, 2.5)
+	# Health shows on your body: the ink fades and cracks as you get hurt.
+	var frac: float = clampf(hp / Game.max_hp(), 0.0, 1.0)
+	var body: Color = C.danger if hurt_t > 0.0 else el_c
+	body.a = 0.35 + 0.65 * frac
+	draw_circle(shake, r, body)
+	draw_arc(shake, r, 0, TAU, 32, Color(C.ink, 0.5 + 0.5 * frac), 2.5)
+	var cracks := int((1.0 - frac) * 7.0)
+	for i in cracks:
+		var a0 := i * 2.6 + 1.1
+		var mid: Vector2 = shake + Vector2.from_angle(a0) * r * 0.55
+		draw_polyline(PackedVector2Array([shake + Vector2.from_angle(a0 + 0.5) * r * 0.15, mid, shake + Vector2.from_angle(a0 - 0.25) * r]), Color(C.ink, 0.7), 1.2)
 	if strain > 0.0:
 		# Overcast strain: cracks across the body and ink dripping off it.
 		for i in 3:

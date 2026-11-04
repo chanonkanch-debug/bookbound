@@ -118,6 +118,7 @@ func _new_world():
 	add_child(w)
 	await get_tree().process_frame
 	w.set_process(false)
+	w.auto_rest_ui = true
 	return w
 
 
@@ -132,10 +133,11 @@ func _play_bare(style: String) -> Dictionary:
 	var deaths := 0
 	var was_dead := false
 	var max_time := 1800.0
-	while t < max_time and int(Game.ch.level) < GameData.CEREMONY_LEVEL:
+	while t < max_time and Game.pending_level() < GameData.CEREMONY_LEVEL:
 		want = -1
 		want_aim = null
 		want_charge = 0.0
+		w.rest_held = false
 		_think_bare(w, style)
 		_apply(w)
 		w._update(DT)
@@ -186,7 +188,17 @@ func _apply(w) -> void:
 	w.read_held = not w.read_held if cs.recover_t <= 0.0 else false
 
 
-## Heads home to the Hearth when hurt or out of ink, like a sensible player.
+## When hurt or out of ink: rest if it's safe, otherwise head for the Hearth.
+func _retreat(w) -> void:
+	var p = w.player
+	if w.resting or (w.can_rest() and not w.casting.reading):
+		p.steer = Vector2.ZERO
+		w.rest_held = true
+	else:
+		p.steer = -p.position.normalized() if p.position.length() > 60.0 else Vector2.ZERO
+
+
+## Hurt or out of ink, like a sensible player would notice.
 func _should_retreat(w) -> bool:
 	var p = w.player
 	var hp_f: float = p.hp / Game.max_hp()
@@ -205,8 +217,8 @@ func _think_bare(w, style: String) -> void:
 		p.steer = Vector2.ZERO
 		return
 	if _should_retreat(w):
-		p.steer = -p.position.normalized() if p.position.length() > 60.0 else Vector2.ZERO
-		if style == "skirmisher":
+		_retreat(w)
+		if style == "skirmisher" and not w.resting:
 			want = 2
 		return
 	var near = w.nearest(p.position, 2000.0)
@@ -406,6 +418,7 @@ func _play_book(el: String, th: String, ri: int) -> Dictionary:
 		want = -1
 		want_aim = null
 		want_charge = 0.0
+		w.rest_held = false
 		var strain_before: float = cs.strain_t
 		_think_book(w)
 		_apply(w)
@@ -465,7 +478,7 @@ func _think_book(w) -> void:
 		p.steer = Vector2.ZERO
 		return
 	if _should_retreat(w):
-		p.steer = -p.position.normalized() if p.position.length() > 60.0 else Vector2.ZERO
+		_retreat(w)
 		return
 	var near = w.nearest(p.position, 700.0)
 	if near == null:
@@ -608,6 +621,7 @@ func _play_rates(el: String, th: String) -> Dictionary:
 		want = -1
 		want_aim = null
 		want_charge = 0.0
+		w.rest_held = false
 		_think_book(w)
 		_apply(w)
 		var was_still: bool = w.player.still > 0.4

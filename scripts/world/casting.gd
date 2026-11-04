@@ -188,6 +188,8 @@ func _fizzle(kind: String) -> void:
 	w.player.mana = minf(Game.max_mana(), w.player.mana + paid * float(GameData.READ.fizzle_refund))
 	last_result = kind
 	fizzles += 1
+	if kind == "fizzle":
+		w.on_fizzle()
 	fizzle_fx = 0.5
 	recover_t = float(GameData.READ.recover)
 	paid = 0.0

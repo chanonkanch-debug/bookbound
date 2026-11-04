@@ -110,6 +110,13 @@ func _autotest() -> void:
 	var w = current
 	w.set_process(false)
 	_check(not Game.has_book(), "new characters start without a book")
+	print("Interface (Phase 2):")
+	var nothing := true
+	for k in GameData.UI_PARTS:
+		if Game.ch.ui[k]:
+			nothing = false
+	_check(nothing and w.hud.dock.modulate.a < 0.01, "a new player sees only the world: no interface parts yet")
+	_check(not Game.show_numbers(), "show_numbers is off by default")
 	print("Bare hands:")
 	# Walk out, pull a few monsters close, then use every stance on them.
 	w.player.steer = Vector2.RIGHT
@@ -117,6 +124,8 @@ func _autotest() -> void:
 	w.player.steer = Vector2.ZERO
 	for k in mini(4, w.enemies.size()):
 		w.enemies[k].position = w.player.position + Vector2.from_angle(k * 1.6) * 40.0
+	await _step(w, 1)
+	_check(Game.ch.ui.hands, "the stance marks appear once a monster comes close")
 	_check(await _read(w, 0.03) == "fizzle", "releasing a Shove too early fizzles")
 	var turned_at := -1
 	w.casting.turn_to(1)
@@ -131,22 +140,60 @@ func _autotest() -> void:
 		var near = w.nearest(w.player.position, 400.0)
 		w.bot_aim = near.position if near != null else null
 		w.player.mana = Game.max_mana()
+		w.player.hp = Game.max_hp()
 		await _read(w, 0.5)
 	if shots:
 		_shot("test_1_bare_hands")
-		w.hud.toggle_dev()
+		w.designer.toggle()
 		await get_tree().process_frame
 		_shot("test_1b_designer_view")
-		w.hud.toggle_dev()
+		w.designer.toggle()
 	print("  signals: ", Game.ch.signals)
 	print("  book odds: ", Game.element_weights(), " thickness ", Game.thickness_weights())
+	_check(w.splats.size() > 0, "hits leave ink splatters instead")
+	var texts_with_digits := 0
+	for t in w.texts:
+		if String(t.s).is_valid_int():
+			texts_with_digits += 1
+	_check(texts_with_digits == 0, "no damage numbers in normal play")
+	print("Rest (Phase 2):")
+	w.auto_rest_ui = true
 	w.gain_xp(1400)
-	_check(w.ceremony_ready(), "ceremony ready at Lv %d" % GameData.CEREMONY_LEVEL)
-	w.player.position = Vector2(0, 50)   # walk into the Hearth
-	w.set_process(true)
-	for frame in 5:
-		await get_tree().process_frame
-	_check(current.has_method("open_book") and not Game.has_book(), "standing in the Hearth opens the ceremony")
+	_check(int(Game.ch.level) == 1 and Game.pending_level() >= GameData.CEREMONY_LEVEL, "XP is earned, but no level is written before resting")
+	for e in w.enemies:
+		e.queue_free()
+	w.enemies.clear()
+	w.player.position = Vector2(300, 300)
+	w.player.hp = Game.max_hp() * 0.5
+	w.rest_held = true
+	w.player.steer = Vector2.ZERO
+	await _step(w, roundi(float(GameData.REST.time) * 0.5 / DT))
+	_check(w.resting, "holding R in a safe spot starts a rest")
+	w.player.steer = Vector2.LEFT
+	await _step(w, 2)
+	w.player.steer = Vector2.ZERO
+	_check(not w.resting and int(Game.ch.level) == 1, "moving interrupts the rest, nothing is written")
+	await _step(w, 2)
+	await _step(w, roundi(float(GameData.REST.time) / DT) + 5)
+	w.rest_held = false
+	_check(int(Game.ch.level) >= GameData.CEREMONY_LEVEL, "a full rest writes the pending levels (now Lv %d)" % Game.ch.level)
+	_check(Game.ch.journal.size() > 0 and Game.ch.ui.journal, "the journal has appeared and has entries")
+	print("  journal: ", Game.ch.journal)
+	_check(not Game.has_book(), "the ceremony waits for a rest in the Hearth")
+	w.player.position = Vector2(0, 40)   # into the Hearth, then rest at its fire
+	for e in w.enemies:
+		e.queue_free()
+	w.enemies.clear()
+	await _step(w, 3)
+	w.rest_pressed = true
+	w.rest_held = true
+	for f in roundi(float(GameData.REST.campfire_time) / DT) + 10:
+		if current != w:
+			break
+		w._update(DT)
+	w.rest_held = false
+	await get_tree().process_frame
+	_check(current is CeremonyScreen and not Game.has_book(), "the first rest in the Hearth opens the ceremony")
 	if shots:
 		_shot("test_2_ceremony")
 	current.open_book()
@@ -156,6 +203,7 @@ func _autotest() -> void:
 	_check(Game.has_book(), "the ceremony gives a book")
 	print("  ceremony book: ", Game.ch.el, " / ", Game.ch.thick, " / aspect ", Game.ch.aspect.id)
 
+	_check(Game.ch.ui.book, "the book appears at the ceremony")
 	print("Reading (Phase 1):")
 	Game.ch.thick = "thick"
 	Game.ch.spells = [{"i": 0, "lvl": 5}, {"i": 1, "lvl": 5}, {"i": 2, "lvl": 5}]
@@ -163,6 +211,9 @@ func _autotest() -> void:
 	w = current
 	w.set_process(false)
 	w.player.position = Vector2(0, 260)
+	for e in w.enemies:
+		e.queue_free()
+	w.enemies.clear()
 	await _step(w, 2)
 	var cs = w.casting
 	var st0: Dictionary = cs.stats_for(0)
@@ -177,7 +228,7 @@ func _autotest() -> void:
 	await _step(w, 150)
 	w.read_held = false
 	await _step(w, 1)
-	_check(cs.casts - n_before == 1, "holding the key for 5 s casts once (no spam)")
+	_check(cs.casts - n_before == 1, "holding the key for 5 s casts once (no spam, got %d)" % (cs.casts - n_before))
 	await _step(w, 10)
 	# Page turns: page 1 -> 3 is two turns on a thick book.
 	cs.turn_to(2)
@@ -217,17 +268,37 @@ func _autotest() -> void:
 			break
 	_check(broke, "taking a hit can break a read")
 	# Monsters telegraph: an Inkling next to you winds up before it bites.
-	var e = w.enemies[0]
-	e.position = w.player.position + Vector2(30, 0)
-	e.aggro = true
+	w.spawn(true)
+	var foe = w.enemies[0]
+	foe.position = w.player.position + Vector2(30, 0)
+	foe.aggro = true
 	var saw_windup := false
 	for f in 40:
 		await _step(w, 1)
-		if e.state == "windup":
+		if foe.state == "windup":
 			saw_windup = true
 			break
 	_check(saw_windup, "monsters wind up before they strike")
 
+	print("Writing ink at rest (Phase 2):")
+	for e in w.enemies:
+		e.queue_free()
+	w.enemies.clear()
+	Game.ch.ink = 3
+	Game.ch.spells[0].lvl = 2
+	var lvl0: int = Game.ch.spells[0].lvl
+	w.finish_rest()
+	await get_tree().create_timer(2.0).timeout
+	_check(w.rest_ui.writing, "a rest with writing ink opens the pages")
+	if shots:
+		_shot("test_4b_writing")
+	w.rest_ui.write_into(0)
+	_check(Game.ch.spells[0].lvl == lvl0 + 1 and Game.ch.ink == 2, "clicking a page writes ink into it")
+	w.rest_ui.close()
+	await get_tree().create_timer(0.8).timeout
+	_check(not w.paused, "closing the book returns to the field")
+	w.spawn(true)
+	w.spawn(true)
 	print("Field:")
 	cs.turn_to(0)
 	for k in 30:
@@ -251,6 +322,23 @@ func _autotest() -> void:
 		_shot("test_6_book")
 	w.book.close()
 	await _step(w, 30)
+	print("Saves (Phase 2):")
+	_test_migration()
 	print("Autotest finished with %d failure(s). Level %d, enemies alive %d" % [failures, w.ch.level, w.enemies.size()])
 	Game.delete_save()
 	get_tree().quit(1 if failures > 0 else 0)
+
+
+## An old (version 1) save must load with its book, levels and hidden chapter intact.
+func _test_migration() -> void:
+	var old := {
+		"name": "Old", "bg": "sailor", "el": "earth", "thick": "medium", "pages": 180,
+		"spells": [{"i": 0, "lvl": 6}, {"i": 2, "lvl": 4}], "ink": 3, "level": 9, "xp": 40,
+		"aspect": {"id": "echo", "progress": 5, "stage": 2, "awakened": false, "margins": ["a", "b"], "need": 9, "streak": 10},
+		"signals": {}, "use": {}, "temper": {},
+	}
+	var d: Dictionary = Game.parse_save(JSON.stringify(old))
+	_check(int(d.get("save_version", 0)) == GameData.SAVE_VERSION, "an old save is migrated to version %d" % GameData.SAVE_VERSION)
+	_check(d.el == "earth" and d.thick == "medium" and int(d.level) == 9 and d.spells.size() == 2 and int(d.spells[0].lvl) == 6, "the migrated save keeps its book and levels")
+	_check(d.aspect.id == "echo" and int(d.aspect.progress) == 5 and d.aspect.margins.size() == 2, "the migrated save keeps hidden-chapter progress")
+	_check(d.ui.book and d.ui.journal and d.ui.margins and not d.ui.map, "an old player's interface starts unlocked (except the map)")

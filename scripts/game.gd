@@ -5,12 +5,39 @@ extends Node
 
 const SAVE_PATH := "user://bookbound_save.json"
 
+const SETTINGS_PATH := "user://settings.cfg"
+
 var ch: Dictionary = {}
+var settings: Dictionary = GameData.SETTINGS.duplicate()
 
 
 func _ready() -> void:
 	randomize()
 	_setup_input()
+	_load_settings()
+
+
+# ---------------------------------------------------------------- Hidden settings
+
+func _load_settings() -> void:
+	var cf := ConfigFile.new()
+	if cf.load(SETTINGS_PATH) != OK:
+		return
+	for k in GameData.SETTINGS:
+		settings[k] = cf.get_value("settings", k, GameData.SETTINGS[k])
+
+
+func set_setting(k: String, v) -> void:
+	settings[k] = v
+	var cf := ConfigFile.new()
+	for key in settings:
+		cf.set_value("settings", key, settings[key])
+	cf.save(SETTINGS_PATH)
+
+
+## The hidden `show_numbers` setting (off by default): a small readout for testing and accessibility.
+func show_numbers() -> bool:
+	return bool(settings.get("show_numbers", false))
 
 
 ## Default controls. If you add these actions in Project Settings > Input Map,
@@ -23,6 +50,7 @@ func _setup_input() -> void:
 		"page_prev": [_key(KEY_Q), _mouse(MOUSE_BUTTON_WHEEL_UP), _pad(JOY_BUTTON_LEFT_SHOULDER)],
 		"page_next": [_key(KEY_E), _mouse(MOUSE_BUTTON_WHEEL_DOWN), _pad(JOY_BUTTON_RIGHT_SHOULDER)],
 		"read": [_key(KEY_SPACE), _mouse(MOUSE_BUTTON_RIGHT), _pad(JOY_BUTTON_A)],
+		"rest": [_key(KEY_R), _pad(JOY_BUTTON_Y)], "journal": [_key(KEY_J)], "map": [_key(KEY_M)],
 		"open_book": [_key(KEY_B)], "designer_view": [_key(KEY_F1)],
 	}
 	for action in map:
@@ -70,6 +98,24 @@ func new_character(char_name: String, bg: String) -> Dictionary:
 		"ink": 0, "level": 1, "xp": 0,
 		"aspect": {"id": "", "progress": 0, "stage": 0, "awakened": false, "margins": [], "need": 0, "streak": 0},
 		"signals": {}, "use": {}, "temper": temper,
+	}.merged(_phase2_fields())
+
+
+## Fields added in save version 2 (Phase 2). Also used to migrate older saves.
+func _phase2_fields() -> Dictionary:
+	var ui := {}
+	for k in GameData.UI_PARTS:
+		ui[k] = false
+	return {
+		"save_version": GameData.SAVE_VERSION,
+		"ui": ui,                  # which parts of the interface have appeared
+		"journal": [],             # journal lines, oldest first
+		"journal_ids": {},         # which JOURNAL entries have fired
+		"nudged": {},              # which one-time control nudges have shown
+		"visited": {},             # regions walked (for the map)
+		"rested": false,
+		"left_hearth": false,
+		"opened": {},              # controls used at least once ("book", "journal", "page"...)
 	}
 
 
@@ -216,6 +262,38 @@ func xp_next(level: int) -> int:
 	return roundi(18.0 * pow(level, 1.55))
 
 
+## XP is earned quietly; levels are only written when you rest. This is the level the
+## character would be after resting now (ch.level is the level already written).
+func pending_level(c: Dictionary = ch) -> int:
+	var lvl := int(c.level)
+	var x := int(c.xp)
+	while x >= xp_next(lvl):
+		x -= xp_next(lvl)
+		lvl += 1
+	return lvl
+
+
+## XP earned toward the next pending level.
+func xp_into_level(c: Dictionary = ch) -> int:
+	var lvl := int(c.level)
+	var x := int(c.xp)
+	while x >= xp_next(lvl):
+		x -= xp_next(lvl)
+		lvl += 1
+	return x
+
+
+## Writes every pending level (called when a rest finishes). Returns how many.
+func write_levels(c: Dictionary = ch) -> int:
+	var n := 0
+	while int(c.xp) >= xp_next(int(c.level)):
+		c.xp = int(c.xp) - xp_next(int(c.level))
+		c.level = int(c.level) + 1
+		c.ink = int(c.ink) + GameData.INK_PER_LEVEL
+		n += 1
+	return n
+
+
 func max_hp() -> int:
 	return 80 + int(ch.level) * 14
 
@@ -264,6 +342,7 @@ func spell_name(slot: Dictionary) -> String:
 func save_game() -> void:
 	if ch.is_empty():
 		return
+	ch.save_version = GameData.SAVE_VERSION
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(ch, "\t"))
@@ -275,9 +354,15 @@ func load_game() -> Dictionary:
 	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
 	if f == null:
 		return {}
-	var d = JSON.parse_string(f.get_as_text())
+	return parse_save(f.get_as_text())
+
+
+## Turns saved text back into a character, migrating older saves. {} if it isn't one.
+func parse_save(text: String) -> Dictionary:
+	var d = JSON.parse_string(text)
 	if typeof(d) != TYPE_DICTIONARY or not d.has("el") or not d.has("aspect"):
 		return {}
+	d = migrate(d)
 	# JSON turns every number into a float; turn the counters back into ints.
 	for k in ["pages", "ink", "level", "xp"]:
 		d[k] = int(d[k])
@@ -286,6 +371,31 @@ func load_game() -> Dictionary:
 		s.lvl = int(s.lvl)
 	for k in ["progress", "stage", "need", "streak"]:
 		d.aspect[k] = int(d.aspect[k])
+	return d
+
+
+## Brings an older save up to SAVE_VERSION without losing the book, levels or
+## hidden-chapter progress. Version 1 is any save without a "save_version" field.
+func migrate(d: Dictionary) -> Dictionary:
+	var v := int(d.get("save_version", 1))
+	if v < 2:
+		# Phase 2: add the new fields. Someone who already played has seen the basics,
+		# so their interface starts unlocked (except the map) and the nudges are spent.
+		var add := _phase2_fields()
+		for k in add:
+			if not d.has(k):
+				d[k] = add[k]
+		var played: bool = int(d.level) > 1 or int(d.xp) > 0 or has_book(d)
+		d.ui.hands = played
+		d.ui.journal = played
+		d.ui.book = has_book(d)
+		d.ui.margins = not d.aspect.get("margins", []).is_empty()
+		if played:
+			for n in GameData.NUDGES:
+				d.nudged[n] = true
+			d.rested = true
+			d.left_hearth = true
+		d.save_version = 2
 	return d
 
 

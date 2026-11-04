@@ -6,7 +6,7 @@ extends Node2D
 ## this is the code that moves to the host/server.
 
 signal quit_to_rite
-signal go_to_ceremony   # bare-handed, high enough level, and standing in the Hearth
+signal go_to_ceremony   # bare-handed, high enough level, and resting in the Hearth
 
 const Ink := preload("res://scripts/util/ink.gd")
 const PlayerScript := preload("res://scripts/world/player.gd")
@@ -16,6 +16,10 @@ const HiddenChapter := preload("res://scripts/world/hidden_chapter.gd")
 const Casting := preload("res://scripts/world/casting.gd")
 const HudScript := preload("res://scripts/ui/hud.gd")
 const BookScript := preload("res://scripts/ui/book_overlay.gd")
+const DesignerScript := preload("res://scripts/ui/designer_panel.gd")
+const JournalScript := preload("res://scripts/ui/journal_overlay.gd")
+const MapScript := preload("res://scripts/ui/map_overlay.gd")
+const RestScript := preload("res://scripts/ui/rest_overlay.gd")
 
 
 ## A node that draws with a function from World, so ground and effects can sit
@@ -34,6 +38,10 @@ var chapter
 var casting
 var hud
 var book
+var designer
+var journal_ui
+var map_ui
+var rest_ui
 var camera: Camera2D
 var under: Drawer
 var over: Drawer
@@ -54,6 +62,17 @@ var read_held := false      # the read key is down (set from input, or by the ba
 var last_page_held := false # the Last Page key is down
 var bot_aim = null          # a Vector2 set by the balance bot instead of the mouse
 var aim_mouse := false      # true once the mouse has moved; keyboard/gamepad players aim where they face
+var resting := false        # Phase 2: levels are only written when you rest
+var rest_t := 0.0
+var rest_need := 0.0
+var rest_at_fire := false
+var rest_held := false      # the rest key is down (set from input, or by the balance bot)
+var rest_pressed := false   # the rest key was just pressed this frame
+var rest_fx := 0.0          # >0 just after a rest was interrupted, for the visuals
+var auto_rest_ui := false   # the balance bot skips the end-of-rest screens and writes ink evenly
+var nudge_clock := {}
+var nudge_id := ""
+var nudge_t := 0.0
 var streak := 0
 var streak_t := 0.0
 var time := 0.0
@@ -103,7 +122,6 @@ func _ready() -> void:
 	camera = Camera2D.new()
 	camera.position_smoothing_enabled = true
 	camera.position_smoothing_speed = 6.0
-	camera.offset = Vector2(155, 0)   # keeps you centred in the area left of the side panel
 	player.add_child(camera)
 	camera.make_current()
 
@@ -115,15 +133,23 @@ func _ready() -> void:
 	book = BookScript.new()
 	book.w = self
 	add_child(book)
+	designer = DesignerScript.new()
+	designer.w = self
+	add_child(designer)
+	journal_ui = JournalScript.new()
+	journal_ui.w = self
+	add_child(journal_ui)
+	map_ui = MapScript.new()
+	map_ui.w = self
+	add_child(map_ui)
+	rest_ui = RestScript.new()
+	rest_ui.w = self
+	add_child(rest_ui)
+	if Game.has_book() and not ch.ui.get("book", false):
+		unlock("book")
 
 	for i in int(GameData.MONSTERS.initial):
 		spawn(true)
-	log_msg("%s steps out of the Hearth. Mira (%s) follows." % [ch.name, GameData.ELEMENTS[ally.el].name])
-	if not Game.has_book():
-		if ceremony_ready():
-			log_msg("Your Book Ceremony is ready. Return to the Hearth.")
-		else:
-			log_msg("You have no book yet. Fight with your bare hands until Lv %d." % GameData.CEREMONY_LEVEL)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -137,14 +163,35 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	var dt := minf(delta, 0.05)
+	if Input.is_action_just_pressed("designer_view"):
+		designer.toggle()
 	if Input.is_action_just_pressed("open_book"):
 		if book.visible:
 			book.close()
 		else:
 			open_book()
-	elif book.visible and Input.is_action_just_pressed("ui_cancel"):
-		book.close()
+	elif Input.is_action_just_pressed("journal"):
+		if journal_ui.visible:
+			journal_ui.close_journal()
+		elif not paused and ch.ui.get("journal", false):
+			ch.opened.journal = true
+			journal_ui.open()
+	elif Input.is_action_just_pressed("map"):
+		if map_ui.visible:
+			map_ui.close_map()
+		elif not paused and ch.ui.get("map", false):
+			map_ui.open()
+	elif Input.is_action_just_pressed("ui_cancel"):
+		if book.visible:
+			book.close()
+		elif journal_ui.visible:
+			journal_ui.close_journal()
+		elif map_ui.visible:
+			map_ui.close_map()
+	designer.tick(dt)
 	if not paused:
+		rest_held = Input.is_action_pressed("rest")
+		rest_pressed = Input.is_action_just_pressed("rest")
 		for i in 3:
 			if Input.is_action_just_pressed("page_%d" % (i + 1)):
 				casting.turn_to(i)
@@ -170,14 +217,13 @@ func _update(dt: float) -> void:
 		pointer_down = false
 
 	player.tick(dt)
-	casting.tick(dt, read_held or last_page_held, 3 if last_page_held else -1)
+	casting.tick(dt, (read_held or last_page_held) and not resting, 3 if last_page_held else -1)
 	if not Game.has_book():
 		_track_movement()
-	if ceremony_ready() and player.dead_t <= 0.0 and player.position.length() < GameData.TOWN_RADIUS:
-		Game.save_game()
-		go_to_ceremony.emit()
-		set_process(false)
-		return
+	_tick_rest(dt)
+	rest_pressed = false
+	_tick_unlocks()
+	_tick_nudges(dt)
 	ally.tick(dt)
 
 	spawn_t -= dt
@@ -390,11 +436,16 @@ func hit(e, base: float, el: String, src: String, move := "") -> void:
 	e.hp -= dmg
 	e.flash = 0.12
 	if dmg >= e.max_hp * float(GameData.MONSTERS.interrupt_frac):
-		e.interrupt()
+		if e.interrupt() and src == "player":
+			journal("first_interrupt")
 	e.aggro = true
 	if src == "ally":
 		e.ally_hit = float(GameData.CHAPTER_TUNING.echo_window)
-	add_text(e.position + Vector2(randf_range(-6, 6), -e.r - 4), str(dmg), C.ink_soft if src == "ally" else C.ink, 13, 0.6)
+	# Show, don't tell: the size of the ink splatter says how hard it hit.
+	splats.append({"p": e.position + Vector2(randf_range(-4, 4), randf_range(-4, 4)), "r": 3.0 + sqrt(float(dmg)) * 1.5,
+		"t": 0.0, "life": 1.6, "sd": randf() * 9.0, "a": 0.5 if src == "player" else 0.3})
+	if Game.show_numbers():
+		add_text(e.position + Vector2(randf_range(-6, 6), -e.r - 4), str(dmg), C.ink_soft if src == "ally" else C.ink, 13, 0.6)
 	if e.hp <= 0:
 		kill(e, src)
 
@@ -493,7 +544,9 @@ func ceremony_ready() -> bool:
 
 func _combo(e, label: String, el: String) -> void:
 	if syn_t <= 0.0:
-		add_text(e.position + Vector2(0, -e.r - 18), label, C[el], 15, 1.1)
+		ring(e.position, e.r, e.r + 22.0, 0.45, C[el], 2.5)
+		if Game.show_numbers():
+			add_text(e.position + Vector2(0, -e.r - 18), label, C[el], 15, 1.1)
 		syn_t = 0.4
 
 
@@ -504,33 +557,19 @@ func kill(e, src: String) -> void:
 			signal_lean("streak_kill")
 		if not e.bit_player:
 			signal_lean("clean_kill")
-	splats.append({"p": e.position, "r": e.r * 1.5, "t": 0.0, "life": 4.0, "sd": randf() * 9.0})
+	splats.append({"p": e.position, "r": e.r * 1.5, "t": 0.0, "life": 4.0, "sd": randf() * 9.0, "a": 0.22})
+	if src == "player":
+		unlock("journal")
+		journal("first_kill")
 	streak += 1
 	streak_t = float(GameData.STREAK_WINDOW)
 	chapter.on_kill(e, src)
 	gain_xp(e.xp)
 
 
+## XP is earned quietly. Levels are only written when you rest (see finish_rest).
 func gain_xp(n: int) -> void:
 	ch.xp += n
-	while ch.xp >= Game.xp_next(ch.level):
-		ch.xp -= Game.xp_next(ch.level)
-		ch.level += 1
-		ch.ink += GameData.INK_PER_LEVEL
-		player.hp = Game.max_hp()
-		player.mana = Game.max_mana()
-		ring(player.position, 10, 120, 0.9, C.gilt, 3)
-		add_text(player.position + Vector2(0, -30), "Level %d" % ch.level, C.gilt, 20, 1.6)
-		if Game.has_book():
-			log_msg("Reached Lv %d. +%d ink to write into your spells." % [ch.level, GameData.INK_PER_LEVEL])
-		else:
-			log_msg("Reached Lv %d. +%d ink, saved for the book you don't have yet." % [ch.level, GameData.INK_PER_LEVEL])
-			log_msg(lean_hint())
-			if int(ch.level) == GameData.CEREMONY_LEVEL:
-				log_msg("Your Book Ceremony is ready. Return to the Hearth.")
-				add_text(player.position + Vector2(0, -52), "Return to the Hearth", C.gilt, 16, 2.5)
-		hud.rebuild_spells()
-		Game.save_game()
 
 
 ## A monster's strike lands (or is dodged mid-dash).
@@ -539,6 +578,7 @@ func enemy_strike(e) -> void:
 		return
 	if player.dodge_t > 0.0:
 		ring(player.position, 6, 30, 0.3, C.ink_soft, 1.5)
+		journal("first_dodge")
 		return
 	e.bit_player = true
 	hurt(e.dmg)
@@ -553,6 +593,11 @@ func hurt(d: float) -> void:
 	player.hp -= d
 	player.hurt_t = 0.25
 	casting.on_hurt()
+	if resting:
+		_break_rest()
+	if player.hp > 0.0 and player.hp / Game.max_hp() < float(GameData.UNLOCK.near_death):
+		unlock("journal")
+		journal("near_death")
 	if player.hp <= 0.0:
 		_die()
 
@@ -564,12 +609,19 @@ func _die() -> void:
 	streak = 0
 	player.low = false
 	casting.reading = false
-	log_msg("You fell. You lost 10% of your XP and wake at the Hearth.")
+	resting = false
+	unlock("journal")
+	journal("first_death")
 
 
 ## Overcasting: the missing ink was paid in health (see casting.gd).
 func on_overcast(_hp_cost: float) -> void:
 	player.hurt_t = 0.15
+	journal("first_overcast")
+
+
+func on_fizzle() -> void:
+	journal("first_fizzle")
 
 
 func _push_soak_slow(e, st: Dictionary, origin: Vector2) -> void:
@@ -700,13 +752,15 @@ func perform(st: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 ## `slot` is the page index, or 3 for the hidden Last Page spell.
 func on_cast(slot: int, st: Dictionary, mult: float) -> void:
 	var aim := aim_point()
+	ch.opened.attack = true
+	if float(st.get("overcharge", 0.0)) >= 0.9:
+		journal("first_charge")
 	if not Game.has_book():
 		_cast_bare(st, aim)
 		return
 	if slot == 3:
 		perform(st, aim, "player", 1.0)
 		ring(player.position, 10, 220, 0.8, C.gilt, 4)
-		add_text(player.position + Vector2(0, -34), "Last Page", C.gilt, 20, 1.4)
 		last_page_cd = 12.0
 		return
 	var still: bool = player.still > 0.4
@@ -745,18 +799,204 @@ func last_page_ready() -> bool:
 	return a.awakened and a.id == "lastpage" and player.dead_t <= 0.0 and player.hp / Game.max_hp() < 0.3 and last_page_cd <= 0.0
 
 
-func spend_ink(i: int) -> void:
+## Writes one writing ink into page i (only while resting, see rest_overlay.gd).
+## Returns true if it was written.
+func spend_ink(i: int) -> bool:
 	var s: Dictionary = ch.spells[i]
 	if ch.ink < 1 or s.lvl >= Game.max_spell_level():
-		return
+		return false
 	var tier_before := int(s.lvl / 4.0)
 	s.lvl += 1
 	ch.ink -= 1
 	if int(s.lvl / 4.0) > tier_before:
-		log_msg("%s evolved into %s." % [GameData.SPELLS[ch.el][s.i].name, Game.spell_name(s)])
 		ring(player.position, 10, 90, 0.7, C[ch.el], 3)
 	hud.rebuild_spells()
 	Game.save_game()
+	return true
+
+
+# ================================================================ Rest (Phase 2)
+
+## Safe to rest: nothing hunting you nearby.
+func can_rest() -> bool:
+	if player.dead_t > 0.0:
+		return false
+	for e in enemies:
+		if not e.dead and e.aggro and e.position.distance_to(player.position) < float(GameData.REST.break_range):
+			return false
+	return true
+
+
+func near_campfire() -> bool:
+	for f in GameData.CAMPFIRES:
+		if player.position.distance_to(f) < float(GameData.REST.campfire_range) + (GameData.TOWN_RADIUS if f == Vector2.ZERO else 0.0):
+			return true
+	return false
+
+
+func _tick_rest(dt: float) -> void:
+	rest_fx = maxf(0.0, rest_fx - dt)
+	var R: Dictionary = GameData.REST
+	if not resting:
+		if casting.reading or player.dead_t > 0.0:
+			return
+		var fire := near_campfire()
+		if (fire and rest_pressed) or (rest_held and player.still > 0.1):
+			if not can_rest():
+				rest_fx = 0.6
+				return
+			resting = true
+			rest_t = 0.0
+			rest_at_fire = fire
+			rest_need = float(R.campfire_time if fire else R.time)
+		return
+	# Moving, letting go (in the open), or a hunter coming close wakes you.
+	if player.still <= 0.0 or (not rest_at_fire and not rest_held) or not can_rest():
+		_break_rest()
+		return
+	player.mana = minf(Game.max_mana(), player.mana + float(R.ink_rate) * dt)
+	player.hp = minf(Game.max_hp(), player.hp + float(R.campfire_hp_rate if rest_at_fire else R.hp_rate) * dt)
+	rest_t += dt
+	if rest_t >= rest_need:
+		finish_rest()
+
+
+func _break_rest() -> void:
+	resting = false
+	rest_fx = 0.6
+
+
+## A finished rest: pending levels are written, then (with a book) you may write
+## ink into your pages. The first rest in the Hearth at the ceremony level opens the ceremony.
+func finish_rest() -> void:
+	resting = false
+	var in_hearth: bool = player.position.length() < GameData.TOWN_RADIUS
+	var hp_frac: float = player.hp / Game.max_hp()
+	var n: int = Game.write_levels(ch)
+	ch.rested = true
+	ch.opened.rest = true
+	unlock("journal")   # a rest is when the journal gets written, so it appears by then at the latest
+	journal("first_rest")
+	if n > 0:
+		player.hp = hp_frac * Game.max_hp()
+		if Game.has_book():
+			journal("woke_stronger")
+		else:
+			journal("woke_stronger_bare")
+			journal("lean_" + lean_hint().md5_text().substr(0, 8), lean_hint())
+	var ceremony: bool = in_hearth and ceremony_ready()
+	if ceremony_ready() and not in_hearth:
+		journal("ceremony_call")
+	Game.save_game()
+	if auto_rest_ui:
+		_auto_write()
+		if ceremony:
+			go_to_ceremony.emit()
+		return
+	if ceremony:
+		journal("ceremony_near")
+		rest_ui.finished.connect(func():
+			Game.save_game()
+			go_to_ceremony.emit(), CONNECT_ONE_SHOT)
+	rest_ui.show_rest(n)
+
+
+## Balance bot: write ink into the lowest page, evenly.
+func _auto_write() -> void:
+	if not Game.has_book():
+		return
+	while ch.ink > 0:
+		var best := -1
+		for i in ch.spells.size():
+			if ch.spells[i].lvl < Game.max_spell_level() and (best < 0 or ch.spells[i].lvl < ch.spells[best].lvl):
+				best = i
+		if best < 0 or not spend_ink(best):
+			break
+
+
+# ================================================================ Journal, unlocks, nudges (Phase 2)
+
+## Writes a journal line once ever (text from JOURNAL in game_data.gd unless given).
+func journal(id: String, text := "") -> void:
+	var ids: Dictionary = ch.journal_ids
+	if ids.has(id):
+		return
+	var t: String = text if text != "" else String(GameData.JOURNAL.get(id, ""))
+	if t == "":
+		return
+	ids[id] = true
+	ch.journal.append(t)
+	hud.add_log(t)
+
+
+## Shows one part of the interface for good (it fades in, see hud.gd).
+func unlock(part: String) -> void:
+	if ch.ui.get(part, false):
+		return
+	ch.ui[part] = true
+	Game.save_game()
+
+
+func unlock_all_ui() -> void:
+	for k in GameData.UI_PARTS:
+		unlock(k)
+
+
+func _tick_unlocks() -> void:
+	if player.dead_t > 0.0:
+		return
+	if not Game.has_book() and not ch.ui.hands and nearest(player.position, float(GameData.UNLOCK.hands_near)) != null:
+		unlock("hands")
+	if not ch.ui.map and player.position.distance_to(GameData.MAP_SCRAP) < float(GameData.UNLOCK.map_pickup):
+		unlock("map")
+		journal("map_found")
+		ring(GameData.MAP_SCRAP, 4, 40, 0.6, C.gilt, 2)
+	if player.still <= 0.0:
+		ch.opened.move = true
+	if casting.turning():
+		ch.opened.page = true
+		if Game.has_book() and ch.thick != "thin":
+			journal("page_turn")
+
+
+## Called by the HUD when you cross into another region.
+func on_region(reg: int) -> void:
+	if reg == 0:
+		if ch.left_hearth:
+			unlock("journal")
+			journal("hearth_return")
+		return
+	ch.left_hearth = true
+	ch.visited[str(reg)] = true
+	journal(["", "fields", "marsh", "reach"][reg])
+	if ch.visited.size() >= 3 and not ch.ui.map:
+		unlock("map")
+		journal("all_regions")
+
+
+## A one-time gentle nudge: a faint key glyph near you, once ever (see NUDGES).
+func _tick_nudges(dt: float) -> void:
+	nudge_t = maxf(0.0, nudge_t - dt)
+	if player.dead_t > 0.0:
+		return
+	var o: Dictionary = ch.opened
+	var conds := {
+		"move": not o.get("move", false),
+		"attack": not o.get("attack", false) and ch.ui.get("hands", false) and nearest(player.position, 220.0) != null,
+		"page": not o.get("page", false) and casting.page_count() > 1 and (Game.has_book() or ch.ui.get("hands", false)),
+		"rest": not ch.rested and player.hp / Game.max_hp() < 0.6 and can_rest(),
+		"book": Game.has_book() and not o.get("book", false),
+		"journal": ch.ui.get("journal", false) and not o.get("journal", false),
+	}
+	for id in conds:
+		if not conds[id] or ch.nudged.get(id, false):
+			continue
+		nudge_clock[id] = float(nudge_clock.get(id, 0.0)) + dt
+		if nudge_clock[id] >= float(GameData.NUDGES[id].after) and nudge_t <= 0.0:
+			ch.nudged[id] = true
+			nudge_id = id
+			nudge_t = float(GameData.NUDGE_SHOW)
+			Game.save_game()
 
 
 # ================================================================ Book, hints, log
@@ -765,29 +1005,26 @@ func open_book() -> void:
 	if paused:
 		return
 	if not Game.has_book():
-		if ceremony_ready():
-			log_msg("You have no book yet. Your ceremony is waiting at the Hearth.")
-		else:
-			log_msg("You have no book yet. It will find you at Lv %d." % GameData.CEREMONY_LEVEL)
 		return
+	ch.opened.book = true
 	var awakened_now: bool = chapter.try_awaken()
 	paused = true
 	pointer_down = false
 	book.open(awakened_now)
 	if awakened_now:
 		awaken_fx = 2.5
-		log_msg("Your book revealed a hidden chapter: %s." % GameData.ASPECTS[ch.aspect.id].name)
-		hud.refresh_margins(true)
 
 
 func on_hint(_text: String) -> void:
 	hint_flash = 1.6
+	unlock("margins")
 	hud.refresh_margins(true)
 	hud.stir_book_button()
 
 
-func log_msg(t: String) -> void:
-	hud.add_log(t)
+## Every margin note: hidden-chapter hints (and, from Phase 3, spell secrets).
+func all_margins() -> Array:
+	return ch.aspect.margins.duplicate()
 
 
 func ring(p: Vector2, r0: float, r1: float, life: float, col: Color, w: float) -> void:
@@ -843,8 +1080,20 @@ func _draw_under(d: Node2D) -> void:
 	Ink.text_c(d, Vector2(0, -town + 32), "The Hearth", 20, Color(C.gilt, 0.85))
 	d.draw_colored_polygon(Ink.blob(Vector2.ZERO, 9.0, 1.0, time * 1.5), C.fire)
 
+	for pt in terrain_patches_for_draw():
+		_draw_patch(d, pt)
+	for f in GameData.CAMPFIRES:
+		if f != Vector2.ZERO:
+			_draw_campfire(d, f)
+	if not ch.ui.get("map", false):
+		# A torn map scrap lying in the grass, with a slow glint.
+		var mp: Vector2 = GameData.MAP_SCRAP
+		d.draw_colored_polygon(PackedVector2Array([mp + Vector2(-8, -5), mp + Vector2(7, -7), mp + Vector2(9, 5), mp + Vector2(-6, 7)]), C.panel)
+		d.draw_polyline(PackedVector2Array([mp + Vector2(-8, -5), mp + Vector2(7, -7), mp + Vector2(9, 5), mp + Vector2(-6, 7), mp + Vector2(-8, -5)]), Color(C.ink_soft, 0.8), 1.0)
+		var g := maxf(0.0, sin(time * 1.3))
+		d.draw_circle(mp + Vector2(4, -3), 2.0 * g, Color(C.gilt, g))
 	for s in splats:
-		d.draw_colored_polygon(Ink.blob(s.p, s.r, s.sd, 0.0), Color(C.ink, 0.22 * (1.0 - s.t / s.life)))
+		d.draw_colored_polygon(Ink.blob(s.p, s.r, s.sd, 0.0), Color(C.ink, float(s.get("a", 0.22)) * (1.0 - s.t / s.life)))
 	for z in zones:
 		var f: float = minf(1.0, (1.0 - z.t / z.life) * 3.0)
 		d.draw_circle(z.p, z.r, Color(C[z.el], 0.16 * f))
@@ -873,6 +1122,51 @@ func _draw_over(d: Node2D) -> void:
 	for t in texts:
 		Ink.text_c(d, t.p, t.s, t.size, Color(t.col, 1.0 - t.age / t.life))
 	_draw_reading(d)
+	_draw_rest(d)
+	_draw_nudge(d)
+
+
+## Ground patches (Phase 3 fills these in).
+func terrain_patches_for_draw() -> Array:
+	return []
+
+
+func _draw_patch(_d: Node2D, _pt: Dictionary) -> void:
+	pass
+
+
+func _draw_campfire(d: Node2D, f: Vector2) -> void:
+	for k in 6:
+		d.draw_circle(f + Vector2.from_angle(k * TAU / 6.0) * 13.0, 3.5, Color(C.ink_soft, 0.7))
+	d.draw_colored_polygon(Ink.blob(f, 7.0, 2.0, time * 2.0), C.fire)
+	d.draw_colored_polygon(Ink.blob(f + Vector2(0, -2), 3.5, 5.0, time * 3.0), C.gilt)
+
+
+## Resting: a warm ring closes slowly around you. A broken rest flickers grey.
+func _draw_rest(d: Node2D) -> void:
+	var p: Vector2 = player.position
+	if resting:
+		var k: float = rest_t / maxf(0.01, rest_need)
+		d.draw_circle(p, 30.0 + 10.0 * k, Color(C.gilt, 0.08 + 0.1 * k))
+		d.draw_arc(p, 34.0, -PI / 2.0, -PI / 2.0 + TAU * k, 48, Color(C.gilt, 0.6), 2.0)
+	elif rest_fx > 0.0:
+		d.draw_arc(p, 30.0, 0, TAU, 32, Color(C.ink_soft, rest_fx), 1.5)
+
+
+## The one-time control nudge: a faint key glyph beside you.
+func _draw_nudge(d: Node2D) -> void:
+	if nudge_t <= 0.0 or nudge_id == "":
+		return
+	var show: float = float(GameData.NUDGE_SHOW)
+	var a: float = minf(1.0, minf(nudge_t, show - nudge_t) / 0.8) * 0.55
+	var g: String = GameData.NUDGES[nudge_id].glyph
+	var f := ThemeDB.fallback_font
+	var tw: float = f.get_string_size(g, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+	var c: Vector2 = player.position + Vector2(0, -38)
+	var r := Rect2(c - Vector2(tw / 2.0 + 7.0, 13.0), Vector2(tw + 14.0, 19.0))
+	d.draw_rect(r, Color(C.paper, a))
+	d.draw_rect(r, Color(C.ink, a), false, 1.0)
+	Ink.text_c(d, c + Vector2(0, 1), g, 13, Color(C.ink, a * 1.6))
 
 
 const GLYPHS := "abcdefghijklmnopqrstuvwxyz"

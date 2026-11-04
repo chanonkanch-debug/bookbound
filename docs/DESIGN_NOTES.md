@@ -141,3 +141,91 @@ Results are in the Phase 1 report in the pull request. With 8 runs per cell the 
   slower now that there are so few monsters. Worth a dedicated pass.
 - The book bot never dies, because it dodges every wind-up perfectly. People will get hit far more.
 - Monster health bars are still on (removed in Phase 2).
+
+---
+
+## Phase 2: Minimal interface and slow progression
+
+### What's on screen
+- **Nothing at first** but you, Mira and the world. The side panel is gone. Its contents (every number,
+  spells, playstyle odds, hidden chapter) moved to the **F1 designer view** (`designer_panel.gd`), which
+  also has buttons to gain a level, rest now, unlock all UI and toggle `show_numbers`.
+- **Health** shows on your body: the ink fades (down to 35% opacity) and up to seven cracks appear as you
+  get hurt. Below 45% health the screen edges darken, deepest near death.
+- **Casting ink** shows as how dark the lines on the open book page are (five lines, each fills a fifth),
+  plus a soft glow when the page is full.
+- **Hits** show as ink splatters sized by damage (radius 3 + 1.5 × √damage). No damage numbers. Element
+  combos flash a coloured ring instead of a label.
+- **Monster health** shows as pale cracks in the monster, no bar.
+- **Page dots** under the book say how many pages there are and which is open; a page visibly lifts
+  over the spine while turning.
+- Region names fade in for a few seconds when you cross into a region (no "Lv 1–4" subtitle).
+- The hidden **`show_numbers`** setting (off by default, saved in `user://settings.cfg`, toggled in F1)
+  brings back damage numbers, monster health bars, combo labels and a one-line readout of health, ink,
+  level, waiting levels and XP.
+
+### Progressive disclosure (`UI_PARTS`, `UNLOCK`)
+| Part | Appears when |
+|---|---|
+| Stance marks (bare hands) | a monster first comes within 150 px |
+| Journal (corner mark, whispered lines, J) | first kill, first near-death (below 25%), first return to the Hearth, **or the first rest** |
+| The book (bottom of the screen) | the ceremony |
+| Margin notes (beside the book, and in the book with B) | the first hint |
+| Map (M) | picking up the torn map scrap in Inkling Fields (`MAP_SCRAP`), or walking all three regions |
+
+Each part fades in over `UI_FADE` (1.6 s) with no explanation. I added "the first rest" to the journal
+triggers, because resting is when the journal is written, and it would be odd to rest and get no journal.
+Old saves (version 1) start with everything unlocked except the map, and their nudges spent.
+
+### Resting (`REST`, `CAMPFIRES`)
+- XP is still earned per kill, but `gain_xp` only adds XP. **Levels are written only at rest**
+  (`Game.write_levels`). `ch.level` is the written level; `Game.pending_level()` is what you'd be after resting.
+- **Hold R** in a safe spot for 4 s, or **press R once at a campfire** for a 2.5 s rest. Campfires: the Hearth's
+  fire (anywhere inside the Hearth counts) and one in each region.
+- Moving, letting go of R (in the open), being hit, or a hunting monster within 260 px interrupts it.
+  A broken rest flickers grey; a rest in progress shows a warm ring closing around you.
+- While resting: casting ink +30/s (fast), health +6/s in the open, +14/s at a campfire.
+- When it finishes: pending levels are written ("The book writes through the night." for 2.2 s over a dark
+  veil), your health keeps the same share of the new maximum, and if you have a book and writing ink the
+  pages open. Each page is drawn as lines of ink, one per level; a gilt frame marks each evolution.
+  Click a page to write one ink into it; the inkwell beside the pages empties as you go. No numbers.
+- **Writing ink can only be spent while resting.** The old "+ Ink" buttons are gone.
+- The Book Ceremony now opens on **the first rest in the Hearth** at Lv 5 or more.
+  Reaching Lv 5 while resting elsewhere writes "Something at the Hearth is calling me home."
+- Dying still costs 10% of your XP toward the next level, and you wake in the Hearth.
+
+### The journal (`JOURNAL`)
+About twenty short entries in the world's voice, each fired once and saved (`ch.journal_ids`), for
+example the first kill, near-death, death, return to the Hearth, first rest, first level written (bare or
+with a book), each region, finding the map, walking all three regions, the first fizzle, overcast,
+overcharge, interrupt, dodge and page turn. The old "lean" hints are still written at rests before the
+ceremony, one per distinct line. Open the journal with J; the newest line is darkest.
+"Close this book forever" (start a new character) moved into the journal, with the same press-twice guard.
+
+### Nudges (`NUDGES`, `NUDGE_SHOW`)
+A faint key glyph appears beside you, once ever, for each of: not moving for 12 s at the start; a monster
+near for 60 s without attacking; 90 s with several pages or stances and no page turn; hurt and safe for
+30 s without ever resting; having a book for 120 s without opening it; having the journal for 45 s without
+opening it. Each shows for 6 s and is saved as spent.
+
+### Saves
+`save_version` is now 2 (`GameData.SAVE_VERSION`). `Game.migrate()` adds the new fields to a version-1 save
+and keeps the book, spells, levels, writing ink and hidden-chapter progress exactly as they were.
+The self-test feeds an old save through it and checks all of this.
+
+### Player-facing text without numbers
+Element passives, thickness descriptions, the start screen, the ceremony screen and the open book (B)
+no longer show numbers or levels. The open book lists your pages (the open one marked), says when there's
+ink to write, and shows all margin notes. An awakened hidden chapter now shows a numberless line
+(`ASPECTS[...].told`); the exact `effect` text stays in the F1 view.
+
+### Deferred or not quite right yet (Phase 2)
+- The book bot now rests in the field instead of walking home, which makes the bare-hands phase slower
+  still for the styles that get hurt most (see the report).
+- Gamepad: R is also the Y button, but the journal and map have no gamepad buttons yet.
+- The lean hints ("You stood your ground…") are written in second person while the rest of the journal
+  is first person. I left them, since they read like the book speaking, but they could be rewritten.
+- To keep the bare-hands phase from dragging now that healing is slow, Inklings give 14 XP (was 10 in
+  Phase 1) and planting your feet blocks 50% of damage (`STANCES.planted_guard`, was 30%). The bot now
+  takes about 4 to 15 minutes to reach the ceremony depending on style (jabbing styles fastest, dodging
+  and planting slowest).

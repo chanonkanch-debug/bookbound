@@ -31,26 +31,26 @@ const COLORS := {
 # Each element is a verb: it changes HOW you play, not how strong you are.
 const ELEMENTS := {
 	"fire": {"name": "Fire", "verb": "Escalate",
-		"passive": "Each cast soon after the last adds Heat: +12% damage, up to 5 stacks."},
+		"passive": "Each cast soon after the last burns hotter than the one before."},
 	"water": {"name": "Water", "verb": "Redirect",
-		"passive": "Your spells push enemies back and leave them Soaked."},
+		"passive": "Your spells push them back and leave them soaked."},
 	"earth": {"name": "Earth", "verb": "Persist",
-		"passive": "Your zones last a long time and slow whatever stands in them."},
+		"passive": "What you raise stays a long time, and slows whatever stands in it."},
 	"wind": {"name": "Wind", "verb": "Move",
-		"passive": "You move 20% faster, and your gusts shove enemies away."},
+		"passive": "Your feet are lighter, and your gusts shove them away."},
 	"lightning": {"name": "Lightning", "verb": "Chain",
-		"passive": "Your sparks jump between enemies. Soaked enemies take double."},
+		"passive": "Your sparks jump from one to the next, and love anything wet."},
 }
 
 # ---------------------------------------------------------------- Book thickness
 # Same total power, spread differently. "chance" values should add up to 1.0.
 const THICKNESS := {
 	"thin": {"name": "Thin", "slots": 1, "max_level": 12, "chance": 0.30, "pages": [32, 64], "spine": 7,
-		"trade": "One spell, 30% stronger, that evolves three times."},
+		"trade": "One spell that never needs a page turned, and grows deep."},
 	"medium": {"name": "Medium", "slots": 2, "max_level": 8, "chance": 0.45, "pages": [140, 220], "spine": 16,
-		"trade": "Two spells, each evolving twice."},
+		"trade": "Two spells, a page apart."},
 	"thick": {"name": "Thick", "slots": 3, "max_level": 5, "chance": 0.25, "pages": [360, 520], "spine": 32,
-		"trade": "Three spells. Each costs 15% more mana and evolves once."},
+		"trade": "Three spells to choose from, but every page takes time to turn."},
 }
 
 # ---------------------------------------------------------------- Spells
@@ -83,7 +83,7 @@ const SPELLS := {
 	],
 	"lightning": [
 		{"name": "Spark", "kind": "chain", "dmg": 19.0, "read": 0.5, "over": 0.6, "mana": 7.0, "jumps": 2, "range": 300.0},
-		{"name": "Arc Nova", "kind": "nova", "dmg": 27.0, "read": 0.8, "over": 0.8, "mana": 14.0, "radius": 105.0},
+		{"name": "Arc Nova", "kind": "nova", "dmg": 29.0, "read": 0.8, "over": 0.8, "mana": 14.0, "radius": 105.0},
 		{"name": "Storm Rod", "kind": "zone", "dmg": 14.0, "read": 1.1, "over": 0.6, "mana": 16.0, "radius": 120.0, "dur": 5.0, "tick": 0.6, "range": 210.0},
 	],
 }
@@ -116,7 +116,7 @@ const STANCES := {
 	"planted_dmg": 0.8,       # hits after standing still for planted_time deal +80% (was 50%)
 	"moving_speed": 0.05,     # +5% move speed while an enemy is chasing you
 	"brink_dmg": 0.2,         # +20% damage while below brink_hp health
-	"planted_guard": 0.3,     # take 30% less damage while planted
+	"planted_guard": 0.5,     # take 50% less damage while planted (was 30%)
 }
 
 # ---------------------------------------------------------------- Playstyle (how you fought before the ceremony)
@@ -259,6 +259,85 @@ const CHAPTER_TUNING := {
 	"echo_window": 4.0,        # seconds after Mira hits an enemy that your kill still counts for Echo (was 2)
 }
 
+# ================================================================ Phase 2: minimal interface, slow progression
+# The screen starts empty. Each part fades in the first time it matters (no explanation text).
+const UI_PARTS := ["hands", "journal", "book", "margins", "map"]
+const UI_FADE := 1.6             # seconds a newly unlocked part takes to fade in
+const UNLOCK := {
+	"hands_near": 150.0,         # stance marks appear when a monster first comes this close
+	"near_death": 0.25,          # health share that counts as a near-death (journal unlock)
+	"map_pickup": 26.0,          # how close you must walk to pick up the map scrap
+}
+const MAP_SCRAP := Vector2(-430.0, 250.0)   # where the torn map lies (Inkling Fields)
+const WHISPER_TIME := 6.0        # seconds a new journal line or margin note stays before fading
+
+# Resting replaces instant level-ups. XP is earned quietly; levels are only written when you rest.
+# Hold R to rest anywhere, or press R once at a campfire (they're in the Hearth and every region).
+# Moving, getting hit, or a hunting monster within break_range interrupts it.
+const REST := {
+	"time": 4.0,                 # seconds of holding R in the open
+	"campfire_time": 2.5,        # seconds at a campfire (just press R once)
+	"campfire_range": 60.0,
+	"break_range": 260.0,        # a hunting monster this close wakes you
+	"ink_rate": 30.0,            # casting ink per second while resting (fast)
+	"hp_rate": 6.0,              # health per second while resting (slow)
+	"campfire_hp_rate": 14.0,    # health per second at a campfire
+	"moment_time": 2.2,          # how long "The book writes through the night." stays up
+	"moment_text": "The book writes through the night.",
+}
+# Campfires: the Hearth's own fire, then one in each region.
+const CAMPFIRES := [Vector2(0, 0), Vector2(390, 90), Vector2(-700, 540), Vector2(240, -1270)]
+
+# A one-time gentle nudge: a faint key glyph near you, once ever, if you haven't found a control.
+#   after = seconds of the situation before the glyph shows; glyph = what it shows
+const NUDGES := {
+	"move": {"after": 12.0, "glyph": "W A S D"},          # you haven't moved since starting
+	"attack": {"after": 60.0, "glyph": "Space"},          # a monster has been near for this long, no attack
+	"page": {"after": 90.0, "glyph": "Q  E"},             # you have more than one page/stance and never turned
+	"rest": {"after": 30.0, "glyph": "R"},                # you're hurt and safe and have never rested
+	"book": {"after": 120.0, "glyph": "B"},               # you have a book and have never opened it
+	"journal": {"after": 45.0, "glyph": "J"},             # the journal is there and never opened
+}
+const NUDGE_SHOW := 6.0          # seconds a nudge glyph stays
+
+# Every journal line, in the world's voice. Each fires once and is saved. No numbers, no game terms.
+const JOURNAL := {
+	"first_kill": "It came apart like wet ink. My hands are still shaking.",
+	"near_death": "Too close. The world went grey at the edges.",
+	"first_death": "I fell, and woke by the Hearth. Something was taken from me.",
+	"hearth_return": "The Hearth is warm. Nothing follows me in here.",
+	"first_rest": "I sat a while, and the ache eased.",
+	"woke_stronger": "I woke stronger. The book is heavier.",
+	"woke_stronger_bare": "I woke stronger. My hands remember more than I do.",
+	"ceremony_near": "The Hearth-keeper watched me rest. Something is waiting for me there.",
+	"ceremony_call": "Something at the Hearth is calling me home.",
+	"book_received": "The book is mine now. It will not let me put it down.",
+	"first_fizzle": "The words slipped before I finished them.",
+	"first_overcast": "I read with an empty page. It took something from me instead.",
+	"first_interrupt": "I hit it as it gathered itself, and it lost its nerve.",
+	"first_dodge": "It struck where I had been.",
+	"fields": "Grass and small things. They come in twos.",
+	"marsh": "The ground goes soft. Something heavy moves out there.",
+	"reach": "Old armour walks these hills. It never turns its back.",
+	"map_found": "A torn map, half washed away. Enough to find my way.",
+	"all_regions": "I have walked all of it now. I could draw it from memory.",
+	"page_turn": "The pages are stiff. Turning them takes time I don't always have.",
+	"first_charge": "I held the words longer, and they came out heavier.",
+}
+
+# Death screen
+const DEATH_TEXT := ["The ink runs dry", "Waking at the Hearth…"]
+# Journal screen
+const BESTIARY_TITLE := "What I know of them"
+const GIVE_UP_TEXT := "Close this book forever"
+const GIVE_UP_CONFIRM := "Press again to give up this book"
+
+# Saves. Bump SAVE_VERSION when the save format changes and add a step in Game.migrate().
+const SAVE_VERSION := 2
+# Hidden settings, saved in user://settings.cfg. show_numbers brings back a small readout
+# (for testing and accessibility). Toggle it in the F1 designer view.
+const SETTINGS := {"show_numbers": false}
+
 # ---------------------------------------------------------------- Backgrounds
 # Weights are added to a base of 1 per element, so nothing is ever impossible.
 const BACKGROUNDS := {
@@ -278,7 +357,7 @@ const BACKGROUNDS := {
 #            charge = Blots wind up, rush in a straight line, then rest (open to punishment)
 #            guard  = Smudge Knights turn slowly and only strike in an arc in front of them
 const FOES := [
-	{"name": "Inkling", "hp": 220.0, "spd": 72.0, "dmg": 14.0, "r": 11.0, "xp": 10, "behavior": "pair",
+	{"name": "Inkling", "hp": 220.0, "spd": 72.0, "dmg": 14.0, "r": 11.0, "xp": 14, "behavior": "pair",
 		"windup": 0.5, "reach": 18.0, "recover": 1.3},
 	{"name": "Blot", "hp": 1000.0, "spd": 50.0, "dmg": 40.0, "r": 16.0, "xp": 30, "behavior": "charge",
 		"windup": 0.8, "reach": 4.0, "recover": 1.8, "charge_speed": 340.0, "charge_time": 0.55, "charge_from": 190.0},
@@ -297,10 +376,10 @@ const MONSTERS := {
 }
 
 const REGIONS := [
-	{"max": 160.0, "name": "The Hearth", "sub": "safe · you heal here"},
-	{"max": 600.0, "name": "Inkling Fields", "sub": "Lv 1–4"},
-	{"max": 1100.0, "name": "Blot Marsh", "sub": "Lv 4–8"},
-	{"max": 99999.0, "name": "Knight's Reach", "sub": "Lv 8+"},
+	{"max": 160.0, "name": "The Hearth", "sub": ""},
+	{"max": 600.0, "name": "Inkling Fields", "sub": ""},
+	{"max": 1100.0, "name": "Blot Marsh", "sub": ""},
+	{"max": 99999.0, "name": "Knight's Reach", "sub": ""},
 ]
 
 # ---------------------------------------------------------------- Hidden chapters
@@ -310,6 +389,7 @@ const ASPECTS := {
 	"stillness": {
 		"name": "Stillness", "need": [10, 18],
 		"effect": "Spells cast while standing still cost no mana and hit 20% harder.",
+		"told": "When you stand still, the book asks nothing and strikes harder.",
 		"trigger": "Cast {need} spells while standing still.",
 		"act": "Open the book while standing still with an enemy close by.",
 		"hints": ["A page stirred when you stopped moving.", "The ink settles when you do.", "Be still. Then read."],
@@ -317,13 +397,15 @@ const ASPECTS := {
 	"hunger": {
 		"name": "Hunger", "need": [3, 5],
 		"effect": "Each kill in a streak adds 4% damage, up to 60%. Resting at the Hearth clears it.",
+		"told": "Every kill feeds the next. The Hearth makes it go hungry again.",
 		"trigger": "Land {need} kills while on a streak of 3 or more.",
 		"act": "Open the book while on a streak of {streak}+ kills.",
 		"hints": ["The book felt heavier after that kill.", "It does not want you to rest.", "Feed it. Then read, mid-hunt."],
 	},
 	"lastpage": {
 		"name": "Last Page", "need": [1, 2],
-		"effect": "Below 30% health, a hidden spell appears: Last Page, a huge burst. Press 4.",
+		"effect": "Below 30% health, a hidden spell appears: Last Page, a huge burst. Hold 4.",
+		"told": "At the edge of falling, the last page can be read. Hold 4.",
 		"trigger": "Fall below 25% health and recover past 60%, {need} times.",
 		"act": "Open the book while below 25% health.",
 		"hints": ["The back cover was warm when you nearly fell.", "Something is written where the pages end.", "Read it only at the edge."],
@@ -331,6 +413,7 @@ const ASPECTS := {
 	"echo": {
 		"name": "Echo", "need": [4, 7],
 		"effect": "Whenever Mira casts, your book answers with a free spell of its own.",
+		"told": "When Mira casts, your book answers her.",
 		"trigger": "Finish off {need} enemies that Mira has just hit.",
 		"act": "Open the book standing beside Mira, with enemies near.",
 		"hints": ["Your pages rustled when Mira cast.", "Two voices read louder than one.", "Read beside her, in the fight."],
