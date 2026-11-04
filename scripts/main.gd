@@ -12,6 +12,12 @@ func _ready() -> void:
 	if "--autotest" in OS.get_cmdline_user_args():
 		_autotest()
 		return
+	if "--balance" in OS.get_cmdline_user_args():
+		var bot := preload("res://scripts/dev/balance.gd").new()
+		add_child(bot)
+		await bot.run()
+		get_tree().quit()
+		return
 	show_rite()
 
 
@@ -79,8 +85,12 @@ func _autotest() -> void:
 			w.cast(frame % 3)
 		if frame == 300 and shots:
 			_shot("test_1_bare_hands")
-	print("Bare-hands leaning: ", Game.ch.lean)
-	print("Book odds now: ", Game.element_weights(Game.ch.bg, Game.ch.lean))
+			w.hud.toggle_dev()
+			await get_tree().process_frame
+			_shot("test_1b_designer_view")
+			w.hud.toggle_dev()
+	print("Playstyle signals: ", Game.ch.signals)
+	print("Book odds now: ", Game.element_weights(), " thickness ", Game.thickness_weights())
 	w.gain_xp(400)
 	assert(w.ceremony_ready(), "ceremony should be ready at Lv %d" % GameData.CEREMONY_LEVEL)
 	w.player.position = Vector2(0, 50)   # walk into the Hearth

@@ -86,7 +86,8 @@ func _intro_text() -> String:
 	var t := "The Hearth-keeper sets a closed book in front of %s. It is warm, and it was waiting for you." % ch.name
 	var top := Game.top_lean(ch)
 	if top != "":
-		t += "\n\nIt seems to know you already. " + String(GameData.LEAN_HINTS[top])
+		var lines: Array = GameData.LEAN_HINTS[top]
+		t += "\n\nIt seems to know you already. " + String(lines[0])
 	t += "\n\nWhatever is inside, it will be yours for life."
 	return t
 

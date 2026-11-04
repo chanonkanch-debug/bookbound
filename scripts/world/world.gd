@@ -59,8 +59,14 @@ var spawn_t := 0.0
 var save_t := 5.0
 var paused := false
 var pointer_down := false
-var last_hit_id := 0        # for the leaning rules before the ceremony
+var last_hit_id := 0        # for the playstyle signals before the ceremony
 var last_hit_t := -99.0
+var chain_len := 0          # hits in a row on the same enemy
+var recent_hits: Array = [] # [time, enemy id] of your recent hits, for "spread"
+var action_hits := 0        # enemies caught by the current Shove or Sidestep
+var chased := false         # an enemy is chasing you (wind signals and stance)
+var last_pos := Vector2.ZERO
+var kite_dist := 0.0
 
 
 func _ready() -> void:
@@ -151,6 +157,8 @@ func _update(dt: float) -> void:
 		pointer_down = false
 
 	player.tick(dt)
+	if not Game.has_book():
+		_track_movement()
 	if ceremony_ready() and player.dead_t <= 0.0 and player.position.length() < GameData.TOWN_RADIUS:
 		Game.save_game()
 		go_to_ceremony.emit()
@@ -320,9 +328,15 @@ func nearest(from: Vector2, max_d: float, exclude: Array = []):
 func hit(e, base: float, el: String, src: String, move := "") -> void:
 	if e.dead:
 		return
-	if move != "" and src == "player":
-		_track_lean(e, move)
 	var m := 1.0
+	if move != "" and src == "player":
+		_track_hit(e, move)
+		if player.still >= float(GameData.LEAN.planted_time):
+			m *= 1.0 + float(GameData.STANCES.planted_dmg)
+		if player.hp / Game.max_hp() < float(GameData.LEAN.brink_hp):
+			m *= 1.0 + float(GameData.STANCES.brink_dmg)
+	if src == "player" and e.first_hit_t < 0.0:
+		e.first_hit_t = time
 	var a: Dictionary = ch.aspect
 	if src == "player":
 		if ch.el == "fire":
@@ -360,27 +374,92 @@ func hit(e, base: float, el: String, src: String, move := "") -> void:
 		kill(e, src)
 
 
-## Before the ceremony: how you fight quietly leans your future book.
-## The rules and numbers are in GameData.LEAN.
-func lean(el: String, amount: float) -> void:
-	if Game.has_book() or not ch.has("lean"):
+## Before the ceremony: how you fight quietly shapes your future book.
+## Each signal belongs to one element; see SIGNALS and LEAN in game_data.gd.
+func signal_lean(sname: String, amount := 1.0) -> void:
+	if Game.has_book():
 		return
-	ch.lean[el] = float(ch.lean.get(el, 0.0)) + amount
+	if not ch.has("signals"):
+		ch.signals = {}
+	ch.signals[sname] = float(ch.signals.get(sname, 0.0)) + amount
 
 
-func _track_lean(e, move: String) -> void:
+## Signals from one of your bare-hands hits landing.
+func _track_hit(e, move: String) -> void:
 	var L: Dictionary = GameData.LEAN
 	var id: int = e.get_instance_id()
 	if player.still >= float(L.planted_time):
-		lean("earth", 1.0)
+		signal_lean("planted")
+	elif player.still <= 0.05:
+		signal_lean("moving_hit")
+	if player.hp / Game.max_hp() < float(L.brink_hp):
+		signal_lean("brink")
+	var crowd := 0
+	for o in enemies:
+		if not o.dead and o.position.distance_to(player.position) < float(L.crowd_radius):
+			crowd += 1
+	if crowd >= int(L.crowd_count):
+		signal_lean("crowd")
+	recent_hits.append([time, id])
+	while not recent_hits.is_empty() and time - float(recent_hits[0][0]) > float(L.spread_window):
+		recent_hits.pop_front()
+	var distinct := {}
+	for h in recent_hits:
+		distinct[h[1]] = true
+	if distinct.size() >= int(L.spread_count):
+		signal_lean("spread")
 	match move:
 		"jab":
-			if time - last_hit_t <= float(L.combo_window):
-				lean("fire" if id == last_hit_id else "lightning", 1.0)
-			last_hit_id = id
-			last_hit_t = time
+			if id == last_hit_id and time - last_hit_t <= float(L.combo_window):
+				chain_len += 1
+			else:
+				chain_len = 1
+			if chain_len >= 3 and player.still < float(L.planted_time):
+				signal_lean("chain")
+			# Switching quickly to a new enemy while the last one is still standing.
+			var prev = instance_from_id(last_hit_id) if last_hit_id != 0 else null
+			if id != last_hit_id and time - last_hit_t <= float(L.snap_window) and prev != null and not prev.dead:
+				signal_lean("snap")
 		"shove":
-			lean("water", 1.0)
+			signal_lean("push")
+			action_hits += 1
+		"sidestep":
+			action_hits += 1
+	last_hit_id = id
+	last_hit_t = time
+
+
+## Signals from how you move: distance covered while something chases you.
+func _track_movement() -> void:
+	var L: Dictionary = GameData.LEAN
+	chased = false
+	for e in enemies:
+		if e.aggro and not e.dead and e.position.distance_to(player.position) < float(L.chase_range):
+			chased = true
+			break
+	var step: Vector2 = player.position - last_pos
+	last_pos = player.position
+	var moved := step.length()
+	if not chased or moved <= 0.0 or moved > 60.0:   # ignore standing and teleports (respawn, dashes)
+		return
+	# Only movement away from (or around) the nearest chaser counts, not running at it.
+	var near = nearest(player.position, float(L.chase_range))
+	if near != null and step.normalized().dot((near.position - player.position).normalized()) < 0.3:
+		kite_dist += moved
+		while kite_dist >= float(L.kite_step):
+			kite_dist -= float(L.kite_step)
+			signal_lean("kite")
+
+
+## A vague journal line about the player's current leaning. Never shows numbers.
+func lean_hint() -> String:
+	var top := Game.top_lean()
+	if top == "":
+		return GameData.LEAN_UNSURE
+	if Game.lean_torn():
+		return GameData.LEAN_TORN
+	var lines: Array = GameData.LEAN_HINTS[top]
+	return lines[(int(ch.level) - 2) % lines.size()]
 
 
 func ceremony_ready() -> bool:
@@ -395,6 +474,11 @@ func _combo(e, label: String, el: String) -> void:
 
 func kill(e, src: String) -> void:
 	e.dead = true
+	if src == "player":
+		if streak >= int(GameData.LEAN.streak_kills):
+			signal_lean("streak_kill")
+		if not e.bit_player:
+			signal_lean("clean_kill")
 	splats.append({"p": e.position, "r": e.r * 1.5, "t": 0.0, "life": 4.0, "sd": randf() * 9.0})
 	streak += 1
 	streak_t = 8.0
@@ -416,9 +500,7 @@ func gain_xp(n: int) -> void:
 			log_msg("Reached Lv %d. +%d ink to write into your spells." % [ch.level, GameData.INK_PER_LEVEL])
 		else:
 			log_msg("Reached Lv %d. +%d ink, saved for the book you don't have yet." % [ch.level, GameData.INK_PER_LEVEL])
-			var top := Game.top_lean()
-			if top != "":
-				log_msg(GameData.LEAN_HINTS[top])
+			log_msg(lean_hint())
 			if int(ch.level) == GameData.CEREMONY_LEVEL:
 				log_msg("Your Book Ceremony is ready. Return to the Hearth.")
 				add_text(player.position + Vector2(0, -52), "Return to the Hearth", C.gilt, 16, 2.5)
@@ -429,6 +511,9 @@ func gain_xp(n: int) -> void:
 func hurt(d: float) -> void:
 	if player.dead_t > 0.0:
 		return
+	if player.still >= float(GameData.LEAN.planted_time) and not Game.has_book():
+		signal_lean("absorb", d / 10.0)
+		d *= 1.0 - float(GameData.STANCES.planted_guard)
 	player.hp -= d
 	player.hurt_t = 0.25
 	if player.hp <= 0.0:
@@ -528,11 +613,11 @@ func perform(st: Dictionary, target, src: String, mult: float) -> bool:
 
 ## Cast spell slot i (0–2), or 3 for the hidden Last Page spell.
 ## Before the ceremony, slots 0–2 are the bare-hands moves.
-func cast(i: int) -> void:
+func cast(i: int, aim = null) -> void:
 	if paused or player.dead_t > 0.0:
 		return
 	if not Game.has_book():
-		_cast_bare(i)
+		_cast_bare(i, aim)
 		return
 	var a: Dictionary = ch.aspect
 	if i == 3:
@@ -566,7 +651,7 @@ func cast(i: int) -> void:
 	chapter.on_cast(still)
 
 
-func _cast_bare(i: int) -> void:
+func _cast_bare(i: int, aim = null) -> void:
 	if i >= GameData.BARE_HANDS.size() or cds[i] > 0.0:
 		return
 	var st: Dictionary = Game.bare_stats(i)
@@ -575,13 +660,23 @@ func _cast_bare(i: int) -> void:
 			add_text(player.position + Vector2(0, -24), "Out of mana", C.water, 13, 0.8)
 			mana_warn_t = 0.8
 		return
-	var target = nearest(player.position, 460.0)
-	if st.move == "sidestep" and nearest(player.position, float(GameData.LEAN.dash_near)) != null:
-		lean("wind", 1.0)
+	var target = aim if aim != null and is_instance_valid(aim) and not aim.dead else nearest(player.position, 460.0)
+	var L: Dictionary = GameData.LEAN
 	if st.move == "sidestep":
+		if nearest(player.position, float(L.dash_near)) != null:
+			signal_lean("slip")
 		player.still = 0.0   # a dash is movement, so it never counts as standing your ground
+	if st.move == "shove" and nearest(player.position, float(L.repel_range)) != null:
+		signal_lean("repel")
+	action_hits = 0
 	if not perform(st, target, "player", 1.0):
 		return
+	if action_hits >= 2:
+		signal_lean("multi", action_hits - 1)
+	# Fighting time per move (cooldown-weighted, so a Shove counts as much as six Jabs).
+	if not ch.has("use"):
+		ch.use = {}
+	ch.use[st.move] = float(ch.use.get(st.move, 0.0)) + float(st.cd)
 	player.mana -= float(st.mana)
 	cds[i] = st.cd
 

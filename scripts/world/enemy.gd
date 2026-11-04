@@ -17,6 +17,8 @@ var soak := 0.0
 var slow_t := 0.0
 var slow_f := 1.0
 var ally_hit := 0.0     # >0 means Mira hit this recently (Echo chapter)
+var first_hit_t := -1.0 # world time you first hit it (playstyle signals)
+var bit_player := false # it has hurt you at least once (playstyle signals)
 var flash := 0.0
 var atk := 0.0
 var knock := Vector2.ZERO
@@ -78,6 +80,7 @@ func tick(dt: float) -> void:
 		wander += PI
 	if d < r + p.r + 2.0 and atk <= 0.0 and target_alive:
 		w.hurt(dmg)
+		bit_player = true
 		atk = 0.9
 	queue_redraw()
 
