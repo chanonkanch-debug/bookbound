@@ -17,11 +17,14 @@ static func _col(el: String) -> Color:
 
 
 ## A flying spell (bolt). `v` is its velocity, `t` the world time, `small` for Mira's.
-static func bolt(d: CanvasItem, el: String, p: Vector2, v: Vector2, t: float, small := false) -> void:
+## `scale` and `mark` show its ink branch (The Unwritten, Phase 3, see mark()).
+static func bolt(d: CanvasItem, el: String, p: Vector2, v: Vector2, t: float, small := false, scale := 1.0, mark_ink := "") -> void:
 	var col := _col(el)
 	var dir := v.normalized() if v.length() > 0.1 else Vector2.RIGHT
 	var side := Vector2(-dir.y, dir.x)
-	var s := 1.0 if small else 1.35
+	var s := (1.0 if small else 1.35) * scale
+	if mark_ink != "":
+		mark(d, mark_ink, p, 7.0 * s, t, dir)
 	match el:
 		"fire":
 			# A teardrop pointing forward, its tail flickering, embers drifting up behind.
@@ -165,3 +168,54 @@ static func ring(d: CanvasItem, el: String, p: Vector2, r: float, k: float, w: f
 			d.draw_polyline(pts, col, w * 0.8)
 		_:
 			d.draw_arc(p, r, 0, TAU, 48, col, w)
+
+
+## The Unwritten, Phase 3: how a spell's ink branch looks, drawn under or around it, by shape
+## as well as colour. `r` is the size of the thing marked, `dir` its heading (for bolts).
+##   quick     thin speed strokes trailing behind, a fine fast-turning dash
+##   heavy     a thick dark rim, like a blot that hasn't dried
+##   stubborn  a double rule, two thin rings close together
+##   pale      a faint grey halo that comes and goes
+static func mark(d: CanvasItem, ink: String, p: Vector2, r: float, t: float, dir := Vector2.ZERO) -> void:
+	var col: Color = GameData.Inks.INKS[ink].color if GameData.Inks.INKS.has(ink) else GameData.COLORS.ink
+	match ink:
+		"quick":
+			if dir != Vector2.ZERO:
+				var side := Vector2(-dir.y, dir.x)
+				for k in 2:
+					var o: Vector2 = side * (k * 2.0 - 1.0) * r * 0.45
+					d.draw_line(p - dir * r * 1.2 + o, p - dir * r * 3.2 + o, Color(col, 0.7), 1.0)
+			else:
+				Ink.dashed_circle(d, p, r, Color(col, 0.75), 1.0, t * 6.0)
+		"heavy":
+			d.draw_arc(p, r * 1.05, 0, TAU, 32, Color(GameData.COLORS.ink, 0.7), clampf(r * 0.25, 2.5, 5.0))
+		"stubborn":
+			d.draw_arc(p, r * 1.1, 0, TAU, 24, Color(col, 0.85), 1.2)
+			d.draw_arc(p, r * 1.1 + 3.0, 0, TAU, 24, Color(col, 0.85), 1.2)
+		"pale":
+			var k := 0.5 + 0.5 * sin(t * 2.3 + p.x * 0.01)
+			var big := clampf(20.0 / maxf(r, 1.0), 0.25, 1.0)   # a wide zone gets a fainter halo
+			d.draw_circle(p, r * (1.4 if r < 20.0 else 1.08), Color(col, (0.18 + 0.2 * k) * big))
+			d.draw_arc(p, r * (1.4 if r < 20.0 else 1.08), 0, TAU, 32, Color(col, 0.5 + 0.3 * k), 1.5)
+
+
+## A monster's ink drop lying on the ground (The Unwritten, Phase 3). Each ink has its
+## own shape: quick a tall teardrop, heavy a fat round blot, stubborn a squared drop,
+## pale a hollow cracked ring. `f` fades it as it soaks into the paper (1 = fresh).
+static func drop(d: CanvasItem, ink: String, p: Vector2, t: float, f: float) -> void:
+	var I: Dictionary = GameData.Inks.INKS.get(ink, {})
+	var col: Color = I.get("color", GameData.COLORS.ink)
+	col.a = f
+	var bob := sin(t * 2.0 + p.x) * 1.0
+	var q := p + Vector2(0, bob)
+	match String(I.get("shape", "round")):
+		"tall":
+			d.draw_colored_polygon(PackedVector2Array([q + Vector2(0, -8), q + Vector2(3.5, 0), q + Vector2(0, 3.5), q + Vector2(-3.5, 0)]), col)
+		"round":
+			d.draw_circle(q, 5.0, col)
+		"square":
+			d.draw_rect(Rect2(q - Vector2(4, 4), Vector2(8, 8)), col)
+		"cracked":
+			d.draw_arc(q, 5.0, 0, TAU, 16, col, 2.0)
+			d.draw_line(q + Vector2(-2, -4), q + Vector2(1, 1), col, 1.0)
+	d.draw_circle(q + Vector2(-1.5, -1.5), 1.2, Color(GameData.COLORS.paper, 0.8 * f))

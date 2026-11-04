@@ -7,6 +7,7 @@ const SAVE_PATH := "user://bookbound_save.json"
 const WORLD_PATH := "user://bookbound_world.json"   # The Unwritten, Phase 2: the world's own save
 
 const SETTINGS_PATH := "user://settings.cfg"
+const InkRules := preload("res://scripts/world/inks.gd")   # The Unwritten, Phase 3: branches (static helpers)
 
 var ch: Dictionary = {}
 ## The world's state, kept apart from the character so a host can own it later (co-op):
@@ -120,6 +121,8 @@ func new_character(char_name: String, bg: String) -> Dictionary:
 		"aspect": {"id": "", "progress": 0, "stage": 0, "awakened": false, "margins": [], "need": 0, "streak": 0},
 		"signals": {}, "use": {}, "temper": temper,
 		"fragments": [],           # torn pages found, in the order found (save version 5)
+		"vials": {},               # monster ink carried, doses per ink (save version 6)
+		"pale_used": false,        # this book has taken its one pale branch
 	}.merged(_phase2_fields())
 
 
@@ -144,7 +147,7 @@ func _phase2_fields() -> Dictionary:
 
 
 func _hands_fields() -> Dictionary:
-	return {"lessons": {}, "learned": [], "uses": {}, "tier": {}, "secrets": {}}
+	return {"lessons": {}, "learned": [], "uses": {}, "tier": {}, "secrets": {}, "branch": {}, "dip": ""}
 
 
 func has_book(c: Dictionary = ch) -> bool:
@@ -269,7 +272,7 @@ func bind_book(c: Dictionary) -> void:
 		spell_idx = [0, 1, 2]
 	var spells: Array = []
 	for i in spell_idx:
-		spells.append({"i": i, "lvl": 1})
+		spells.append({"i": i, "lvl": 1, "inks": [], "branch": []})
 	var aspect_id: String = GameData.ASPECTS.keys().pick_random()
 	var need_range: Array = GameData.ASPECTS[aspect_id].need
 	var aspect := {
@@ -350,6 +353,8 @@ func bare_stats(i: int) -> Dictionary:
 	var mastery: float = GameData.MASTERY_MAX * float(move_shares().get(st.move, 0.0))
 	st.mastery = mastery
 	st.dmg = float(st.dmg) * (1.0 + GameData.BARE_DMG_PER_LEVEL * (int(ch.level) - 1)) * (1.0 + mastery)
+	# The Unwritten, Phase 3: hands dipped in monster ink as they grew.
+	InkRules.apply_hands(st, ch.get("hands", {}).get("branch", {}).get(String(st.move), []))
 	return st
 
 
@@ -364,12 +369,19 @@ func spell_stats(slot: Dictionary) -> Dictionary:
 	st.tier = int(lvl / 4.0)
 	st.dmg = dmg
 	st.mana = float(st.mana) * (float(GameData.THICK_BALANCE.thick_mana) if ch.thick == "thick" else 1.0)
+	# The Unwritten, Phase 3: each evolution branched by the monster ink written into it.
+	InkRules.apply_path(st, InkRules.kind_of(st), slot.get("branch", []))
 	return st
 
 
+## "Ember Bolt", "Ember Bolt II", or with a branch "Splintered Ember Bolt II".
 func spell_name(slot: Dictionary) -> String:
 	var tier := int(int(slot.lvl) / 4.0)
-	var n: String = GameData.SPELLS[ch.el][int(slot.i)].name
+	var sp: Dictionary = GameData.SPELLS[ch.el][int(slot.i)]
+	var n: String = sp.name
+	var word := InkRules.branch_word(InkRules.kind_of(sp), slot.get("branch", []))
+	if word != "":
+		n = word + " " + n
 	return n if tier == 0 else n + " " + ["", "II", "III", "IV"][tier]
 
 
@@ -488,6 +500,13 @@ func migrate(d: Dictionary) -> Dictionary:
 		if not d.has("fragments"):
 			d.fragments = []
 		d.save_version = 5
+	if v < 6:
+		# The Unwritten, Phase 3: monster inks. Empty vials; every level already written was
+		# written in the book's own ink, so every evolution so far is a plain step.
+		InkRules.ensure(d)
+		if d.has("ui") and not d.ui.has("vials"):
+			d.ui.vials = false
+		d.save_version = 6
 	return d
 
 

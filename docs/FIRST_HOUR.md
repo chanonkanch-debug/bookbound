@@ -188,3 +188,33 @@ What felt off:
   the player has learned much. The Scrawl was made tougher once (6 to 10 times an Inkling's
   health, 3 escorts) and still falls in about a minute to the bot.
 - **The ceremony came about a minute sooner** because of the extra XP near sites.
+
+## After The Unwritten, Phase 3 (monster inks and branching spells)
+
+The bots now take every drop they pass, write levels with a random carried ink (`bot_pot =
+"carried"`), and dip their hands at a rest: careful players never do, curious and bold ones
+pick a random carried ink. Seeds 1 to 3, all three players, with the final drop rates (12% /
+20% / 30%, vials of 5):
+
+| time | what happens |
+|---|---|
+| 0:12 to 1:55 | The first drop ("It left a drop of itself behind when it came apart. I kept it.") and the vials appear |
+| 0:51 to 2:03 | The first guardian leaves pale ink ("My hands won't hold it. It wants a book.") |
+| 2:11 to 6:00 | Heavy ink (Blots); stubborn ink comes much later, 4 to 26 minutes, once the bot reaches the Reach |
+| 2:17 to 5:53 | Curious and bold players dip their hands for the first time ("I dipped my fist in the quick ink.") |
+| 6:27 to 8:24 | The ceremony (about the same as Phase 2) |
+| 7:45 to 16:51 | **The first branch** ("The page grew toward the ink I fed it.") |
+| 6 to 44 | The first full vial ("My vial is full of it.") |
+| 60:00 | Every book has branched at least once; most vials are full or nearly |
+
+With the first drop rates (30% / 45% / 60%, vials of 6) every vial was full within 5 to 20
+minutes, so ink stopped being a choice and became clutter. Now the first full vial comes
+around minute 20 to 45 in most runs (one bold wind player at minute 6). Quiet stretches are
+about the same as after Phase 2: branches come at the ceremony and then every few rests.
+
+What felt off:
+- **The pale nearly always goes into the first branch.** The first guardian falls before the
+  book, so by the time a page first evolves the bot is already carrying pale, and any pale in
+  the window wins. A person who keeps it for later can, but nothing tells them to.
+- **Vials still fill up by the end of the hour**, because a bot writes only one level per few
+  minutes. Drop rates are easy to lower further if "full" should be rare.

@@ -16,8 +16,17 @@ extends Node
 ##   Fields) walks up to an erasure site, beats its guardian and escorts, and writes it back.
 ##   Prints how long that takes and how often the bot falls. Every book should be within ±20%.
 ##
+## Part 6 (`--only=branches`, The Unwritten, Phase 3): every element and thickness with every
+##   branch path its pages can grow (quick, heavy, stubborn, plain, and the pale), fully grown,
+##   in the Knight's Reach; and bare hands with every dip path in the Fields. Prints how long
+##   each takes to earn the same XP. Steps stack by multiplying, so the order inks were used in
+##   doesn't change how a page plays: each combination is run once ("quick+heavy" covers
+##   quick-then-heavy and heavy-then-quick). Every path should be within ±20% of its book's
+##   average (and of the region average).
+##
 ## Options: `--runs=N` runs per case (default 3), `--signals` shows raw playstyle signals,
-## `--only=books` / `--only=bare` / `--only=sites` / `--only=chapters` / `--only=firsthour` runs one part.
+## `--only=books` / `--only=bare` / `--only=sites` / `--only=chapters` / `--only=firsthour` /
+## `--only=branches` runs one part. `--th=thin` tests one thickness (with --only=branches).
 
 const World := preload("res://scripts/world/world.gd")
 const DT := 1.0 / 30.0
@@ -52,6 +61,7 @@ var fight_t := 0.0
 var fights: Array = []
 var lull := 0.0
 var only_el := ""          # `--el=fire` tests just one element (lets you run elements in parallel)
+var only_th := ""          # `--th=thin` tests just one thickness (Part 6)
 
 
 func run() -> void:
@@ -60,6 +70,8 @@ func run() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--el="):
 			only_el = a.substr(5)
+		if a.begins_with("--th="):
+			only_th = a.substr(5)
 		if a.begins_with("--runs="):
 			runs = int(a.substr(7))
 		if a.begins_with("--only="):
@@ -70,6 +82,8 @@ func run() -> void:
 		await _book_part(runs)
 	if only == "" or only == "sites":
 		await _site_part(runs)
+	if only == "branches":
+		await _branch_part(runs)
 	if only == "chapters" or "--chapters" in OS.get_cmdline_user_args():
 		await _chapter_part()
 	if only == "firsthour":
@@ -387,9 +401,9 @@ func _book_part(runs: int) -> void:
 
 ## One run: a character with this book at the region's level, fighting there
 ## until they earn the region's XP target.
-func _play_book(el: String, th: String, ri: int) -> Dictionary:
+func _play_book(el: String, th: String, ri: int, path: Array = []) -> Dictionary:
 	var rt: Dictionary = REGION_TESTS[ri]
-	var c := _book_bot(el, th, int(rt.level))
+	var c := _book_bot(el, th, int(rt.level), path)
 	Game.ch = c
 	var w = await _new_world()
 	home = Vector2.from_angle(randf() * TAU) * float(rt.radius)
@@ -408,7 +422,8 @@ func _play_book(el: String, th: String, ri: int) -> Dictionary:
 	var was_dead := false
 	var xp0: int = _total_xp(c)
 	var cs = w.casting
-	while t < float(rt.max_time) and _total_xp(c) - xp0 < int(rt.xp):
+	var target: int = branch_xp if branch_xp > 0 else int(rt.xp)
+	while t < float(rt.max_time) * (1.6 if branch_xp > 0 else 1.0) and _total_xp(c) - xp0 < target:
 		want = -1
 		want_aim = null
 		want_charge = 0.0
@@ -433,7 +448,9 @@ func _play_book(el: String, th: String, ri: int) -> Dictionary:
 
 
 ## A character with this book at this level, with all the writing ink spent evenly.
-func _book_bot(el: String, th: String, level: int) -> Dictionary:
+## `path` (Part 6) is the ink each evolution took; otherwise every step is plain. The pale
+## goes on the first page only, the others take plain ink in its place.
+func _book_bot(el: String, th: String, level: int, path: Array = []) -> Dictionary:
 	var c := Game.new_character("Bot", "orphan")
 	c.el = el
 	c.thick = th
@@ -456,6 +473,18 @@ func _book_bot(el: String, th: String, level: int) -> Dictionary:
 			break
 		low.lvl += 1
 		ink -= 1
+	for k in c.spells.size():
+		var sl: Dictionary = c.spells[k]
+		sl.inks = []
+		for j in int(sl.lvl) - 1:
+			sl.inks.append("plain")
+		sl.branch = []
+		for j in int(int(sl.lvl) / 4.0):
+			var ink_j: String = String(path[j]) if j < path.size() else "plain"
+			if ink_j == "pale" and k > 0:
+				ink_j = "plain"
+			sl.branch.append(ink_j)
+	c.pale_used = "pale" in path
 	return c
 
 
@@ -562,20 +591,23 @@ func _expected(w, st: Dictionary, near) -> Array:
 			var reach: float = float(st.speed) * float(st.get("life", 1.1))
 			if d > reach * 0.9:
 				return [0.0, near.position]
-			var n := 5 if tier >= 2 else (3 if tier >= 1 else 1)
+			var n := maxi(1, (5 if tier >= 2 else (3 if tier >= 1 else 1)) + int(st.get("count", 0)))
 			var hits_n: float = 1.0 + 0.35 * (n - 1) * (1.0 if d < 120.0 else 0.4)
+			hits_n *= 1.0 + 0.3 * int(st.get("pierce", 0)) * (1.0 if _count_near(w, near.position, 120.0) > 1 else 0.0)
+			if bool(st.get("returns", false)):
+				hits_n *= 1.5
 			return [dmg * hits_n, near.position]
 		"chain":
 			if d > float(st.range):
 				return [0.0, near.position]
 			var cl := _count_near(w, near.position, 170.0)
-			return [dmg * (1.0 + 0.8 * minf(cl - 1, int(st.jumps) + 2 * tier)), near.position]
+			return [dmg * (1.0 + 0.8 * minf(cl - 1, int(st.jumps) + 2 * tier)) * (1.0 + float(st.get("linger", 0.0))), near.position]
 		"nova":
 			var r: float = float(st.radius) * (1.0 + 0.25 * tier)
 			var cnt := _count_near(w, p.position, r * 0.9)
 			if cnt == 0:
 				return [0.0, near.position]
-			return [dmg * cnt * (2.0 if tier >= 3 else 1.0), near.position]
+			return [dmg * cnt * ((2.0 if tier >= 3 else 1.0) + float(st.get("echo", 0.0))), near.position]
 		"zone":
 			if d > float(st.range) + 40.0:
 				return [0.0, near.position]
@@ -584,6 +616,10 @@ func _expected(w, st: Dictionary, near) -> Array:
 					return [0.0, near.position]
 			var r: float = float(st.radius) * (1.0 + 0.15 * tier)
 			var cnt := _count_near(w, near.position, r)
+			if bool(st.get("follows", false)):
+				# A pale zone sits on you: worth it when they're close.
+				var cnt_f := _count_near(w, p.position, float(st.radius) * (1.0 + 0.15 * tier))
+				return [dmg * cnt_f * float(st.dur) * (1.0 + 0.3 * tier) / float(st.get("tick", 0.5)) * 0.45, p.position]
 			var ticks: float = float(st.dur) * (1.0 + 0.3 * tier) / float(st.get("tick", 0.5))
 			return [dmg * cnt * ticks * 0.45, near.position]
 		"dash":
@@ -824,3 +860,156 @@ func _play_site(el: String, reg: int) -> Dictionary:
 	await get_tree().process_frame
 	Game.delete_save()
 	return {"time": t, "deaths": deaths, "done": done, "woke": woke, "cleared": cleared}
+
+
+# ================================================================ Part 6: branch paths
+
+const BRANCH_XP := 1.5     # the branch test earns half as much XP again as the book test, for steadier numbers
+var branch_xp := 0         # set while Part 6 runs (0 = use the region's own XP target)
+
+## Every combination of `n` steps from `inks` (order doesn't matter), as arrays.
+func _combos(inks: Array, n: int, from := 0) -> Array:
+	if n == 0:
+		return [[]]
+	var out: Array = []
+	for k in range(from, inks.size()):
+		for rest in _combos(inks, n - 1, k):
+			out.append([inks[k]] + rest)
+	return out
+
+
+## Every path a page of this thickness can grow: all combinations of plain and the three
+## monster inks, and the same with one step taken by the pale.
+func _paths(steps: int) -> Array:
+	var base := ["plain", "quick", "heavy", "stubborn"]
+	var out: Array = _combos(base, steps)
+	for rest in _combos(base, steps - 1):
+		out.append(["pale"] + rest)
+	return out
+
+
+func _path_name(path: Array) -> String:
+	var bits: Array = []
+	for k in path:
+		bits.append(String(k))
+	return "+".join(bits)
+
+
+func _branch_part(runs: int) -> void:
+	var rt: Dictionary = REGION_TESTS[2].duplicate()
+	rt.xp = roundi(float(rt.xp) * BRANCH_XP)
+	branch_xp = int(rt.xp)
+	print("\n=== Branch paths: seconds to earn %d XP in %s at Lv %d, every page fully grown (%d runs each) ===" % [int(rt.xp), rt.name, int(rt.level), runs])
+	print("A path is the inks its evolutions took. The pale goes on the first page only (one per book).")
+	print("vs book = against that book's own average over all its paths; ! marks more than 20% off.\n")
+	var all_rows: Array = []
+	var books: Dictionary = {}
+	for el in Game.ELS:
+		if only_el != "" and el != only_el:
+			continue
+		for th in GameData.THICKNESS:
+			if only_th != "" and th != only_th:
+				continue
+			var steps := int(int(GameData.THICKNESS[th].max_level) / 4.0)
+			var key := "%s %s" % [el, th]
+			books[key] = []
+			for path in _paths(steps):
+				var tsum := 0.0
+				var dsum := 0.0
+				for r in runs:
+					seed(1000 + r * 7919 + path.size())   # the same dice for every path's run r
+					var res: Dictionary = await _play_book(el, th, 2, path)
+					tsum += res.time / runs
+					dsum += float(res.deaths) / runs
+				var row := {"book": key, "path": _path_name(path), "time": tsum, "deaths": dsum}
+				books[key].append(row)
+				all_rows.append(row)
+			var bm := 0.0
+			for row in books[key]:
+				bm += float(row.time) / books[key].size()
+			for row in books[key]:
+				row.rel_book = float(row.time) / bm - 1.0
+			var line := "%-17s avg %4ds |" % [key, roundi(bm)]
+			for row in books[key]:
+				line += " %s %d%+d%%%s" % [row.path, roundi(row.time), roundi(100.0 * row.rel_book), "!" if absf(row.rel_book) > 0.2 else ""]
+			print(line)
+	var mean := 0.0
+	for row in all_rows:
+		mean += float(row.time) / maxf(1.0, all_rows.size())
+	var worst_book := 0.0
+	var worst_all := 0.0
+	var off: Array = []
+	for row in all_rows:
+		var rel_all: float = float(row.time) / mean - 1.0
+		worst_book = maxf(worst_book, absf(float(row.rel_book)))
+		worst_all = maxf(worst_all, absf(rel_all))
+		if absf(float(row.rel_book)) > 0.2:
+			off.append("%s %s %+d%%" % [row.book, row.path, roundi(100.0 * float(row.rel_book))])
+	print("\nRegion average %ds over %d paths." % [roundi(mean), all_rows.size()])
+	print("Widest gap from its own book's average: %d%% · from the region average: %d%% (goal: within 20%%)" % [roundi(worst_book * 100.0), roundi(worst_all * 100.0)])
+	if not off.is_empty():
+		print("More than 20%% off its book: %s" % ", ".join(off))
+	if only_el == "" or only_el == "bare":
+		await _bare_branch_part(runs * 3)   # the mixed bare-hands bot is noisier, so it gets more runs
+
+
+## Bare hands: every dip path (the same on all three moves), Lv 4 in the Fields, the mixed style.
+func _bare_branch_part(runs: int) -> void:
+	print("\n--- Bare hands: seconds to earn 180 XP in the Fields at Lv 4, every move grown twice (%d runs each) ---" % runs)
+	var rows: Array = []
+	var m := 0.0
+	for path in _combos(["plain", "quick", "heavy", "stubborn"], 2):
+		var tsum := 0.0
+		var dsum := 0.0
+		for r in runs:
+			seed(2000 + r * 7919)
+			var res: Dictionary = await _play_bare_xp(path)
+			tsum += res.time / runs
+			dsum += float(res.deaths) / runs
+		rows.append({"path": _path_name(path), "time": tsum, "deaths": dsum})
+		m += tsum
+	m /= rows.size()
+	var worst := 0.0
+	var line := "bare hands avg %ds |" % roundi(m)
+	for row in rows:
+		var rel: float = float(row.time) / m - 1.0
+		worst = maxf(worst, absf(rel))
+		line += " %s %d%+d%%%s" % [row.path, roundi(row.time), roundi(100.0 * rel), "!" if absf(rel) > 0.2 else ""]
+	print(line)
+	print("Widest gap from the bare-hands average: %d%% (goal: within 20%%)" % roundi(worst * 100.0))
+
+
+func _play_bare_xp(path: Array) -> Dictionary:
+	var c := Game.new_character("Bot", "orphan")
+	c.level = 4
+	for mv in ["jab", "shove", "sidestep"]:
+		c.hands.tier[mv] = 2
+		c.hands.branch[mv] = path.duplicate()
+	Game.ch = c
+	var w = await _new_world()
+	home = Vector2(0, 380)
+	w.player.position = home
+	retreating = false
+	focus_target = null
+	last_target = null
+	var t := 0.0
+	var deaths := 0
+	var was_dead := false
+	var xp0: int = _total_xp(c)
+	while t < 900.0 and _total_xp(c) - xp0 < 180:
+		want = -1
+		want_aim = null
+		want_charge = 0.0
+		w.rest_held = false
+		_think_bare(w, "mixed")
+		_apply(w)
+		w._update(DT)
+		t += DT
+		var dead: bool = w.player.dead_t > 0.0
+		if dead and not was_dead:
+			deaths += 1
+		was_dead = dead
+	w.queue_free()
+	await get_tree().process_frame
+	Game.delete_save()
+	return {"time": t, "deaths": deaths}

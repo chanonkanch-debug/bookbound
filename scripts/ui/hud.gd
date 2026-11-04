@@ -7,6 +7,8 @@ extends CanvasLayer
 ##   book     the book at the bottom of the screen, from the ceremony on
 ##   margins  margin notes beside the book, with the first one
 ##   map      the map (M), after finding a map scrap or walking all three regions
+##   vials    small vials of monster ink at the bottom right, after the first drop is taken
+##            (The Unwritten, Phase 3): each looks as full as it is, never a count
 ## Health shows on your ink body and as dark screen edges; casting ink shows as how
 ## full the open page looks. The F1 designer view (designer_panel.gd) shows every number.
 ## The hidden `show_numbers` setting (toggle it in F1) brings a small readout back.
@@ -149,9 +151,45 @@ class JournalMark extends Control:
 			draw_line(r.position + Vector2(5, 8 + k * 6), r.position + Vector2(17, 8 + k * 6), Color(C.ink_soft, 0.7), 1.0)
 
 
+## The Unwritten, Phase 3: the monster inks you carry, one small vial each, by shape and fill.
+class Vials extends Control:
+	var w
+	var fresh := 0.0
+	func _draw() -> void:
+		var C: Dictionary = GameData.COLORS
+		var x := size.x - 14.0
+		for ink in GameData.Inks.INK_ORDER:
+			if int(w.ch.get("vials", {}).get(ink, 0)) <= 0:
+				continue
+			var I: Dictionary = GameData.Inks.INKS[ink]
+			var wd := 10.0
+			var ht := 22.0
+			match String(I.shape):
+				"tall":
+					wd = 8.0
+					ht = 28.0
+				"round":
+					wd = 14.0
+					ht = 18.0
+				"square":
+					wd = 13.0
+					ht = 20.0
+			x -= wd
+			var body := Rect2(Vector2(x, size.y - 18.0 - ht), Vector2(wd, ht))
+			var f: float = w.inks.fill(ink)
+			draw_rect(body, Color(C.paper, 0.8))
+			draw_rect(Rect2(body.position + Vector2(0, ht * (1.0 - f)), Vector2(wd, ht * f)), Color(I.color, 0.9))
+			draw_rect(body, Color(C.ink, 0.6 + 0.4 * fresh), false, 1.2)
+			draw_rect(Rect2(body.position + Vector2(wd * 0.25, -4.0), Vector2(wd * 0.5, 4.0)), Color(C.ink, 0.7))
+			if ink == "pale" and bool(w.ch.get("pale_used", false)):
+				draw_line(body.position, body.end, Color(C.ink_soft, 0.8), 1.0)
+			x -= 10.0
+
+
 var w
 var C: Dictionary = GameData.COLORS
 var root: Control
+var vials: Vials
 var vignette: Vignette
 var strain_v: Vignette
 var death: Control
@@ -225,6 +263,18 @@ func _ready() -> void:
 	margin_note.modulate.a = 0.0
 	root.add_child(margin_note)
 
+	vials = Vials.new()
+	vials.w = w
+	vials.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vials.anchor_left = 1.0
+	vials.anchor_right = 1.0
+	vials.anchor_top = 1.0
+	vials.anchor_bottom = 1.0
+	vials.offset_left = -200
+	vials.offset_top = -70
+	vials.modulate.a = 0.0
+	root.add_child(vials)
+
 	numbers = _label("", 12, C.ink_soft)
 	numbers.position = Vector2(24, 56)
 	root.add_child(numbers)
@@ -275,10 +325,12 @@ func _sync_parts(fade: bool) -> void:
 				node = dock
 			"journal":
 				node = journal_mark
+			"vials":
+				node = vials
 		if node == null:
 			continue
 		var target := 1.0 if (ui.get("hands", false) and not Game.has_book()) or (ui.get("book", false) and Game.has_book()) or part == "journal" else 0.0
-		if part == "journal":
+		if part == "journal" or part == "vials":
 			target = 1.0 if on else 0.0
 		if fade:
 			node.create_tween().tween_property(node, "modulate:a", target, float(GameData.UI_FADE))
@@ -303,6 +355,8 @@ func refresh(dt: float) -> void:
 	dock.queue_redraw()
 	journal_mark.fresh = maxf(0.0, journal_mark.fresh - dt * 0.5)
 	journal_mark.queue_redraw()
+	vials.fresh = maxf(0.0, vials.fresh - dt)
+	vials.queue_redraw()
 	death.visible = p.dead_t > 0.0
 
 	# The world works out which region you're in (a rule); the HUD only shows the name.

@@ -605,3 +605,164 @@ wind -22 / -25 / -17, lightning +25 / -12 / +1. Wind stays a little fast, as bef
 - **Site names** aren't shown anywhere yet; the Cartographer (Phase 5) marks them on the map.
 - **The Stacks' three pages** are written but not placed (Phase 7).
 - **Day and night** don't touch sites yet (Phase 6 makes them pulse at night).
+
+---
+
+## The Unwritten, Phase 3: monster inks and branching growth
+
+Numbers and words are in **`scripts/data/ink_data.gd`** (`GameData.Inks`), the second split
+of the data layer, preloaded at the top of `game_data.gd` like `Lore`. Rules are in
+`world/inks.gd`; `game.gd` applies a page's branches when it works out the page's stats, so
+everything that reads stats (casting, the bots, F1) sees the branched spell.
+
+### Monster inks (`INKS`, `DROP`)
+
+| ink | left by | chance | vial holds | looks like |
+|---|---|---|---|---|
+| quick | Inklings | 12% | 5 | violet, a tall teardrop and a tall thin vial |
+| heavy | Blots | 20% | 5 | near-black brown, a fat round blot and a squat vial |
+| stubborn | Smudge Knights | 30% | 5 | iron green, a square drop and a square vial |
+| pale | any guardian | always | 2 | pale grey, a hollow cracked ring and a cracked vial |
+
+A drop lies where the monster came apart for 50 s, slides toward you within 110 px and is
+taken at 30 px. A full vial leaves drops lying ("My vial is full of it."). The vials stand at
+the bottom right once you take your first drop (a new interface part, `vials`), each as full
+as it is, never a count. Each ink has a journal line the first time ("Heavy ink: It sinks to
+the bottom and stays there.").
+
+Why the chances differ: there are many more Inklings than Knights, and the Reach is where the
+game is slowest, so a dose of stubborn ink costs about as much play as a dose of quick. The
+first tries (30% / 45% / 60%, vials of 6) filled every vial in 5 to 20 minutes of the bots' first
+hour, which made ink feel like loot rather than something kept.
+
+### Writing with a pot
+
+At a rest the pots stand above the pages: the book's own ink first, then each monster ink you
+carry (the pale only until the book has had it). Pick one with the mouse or up / down, then
+write a level as before. A monster-ink level costs one dose as well as the writing ink. Each
+line on the page is drawn in the ink it was written with (heavy lines are thicker), and each
+evolution leaves a small fork in the margin in the ink it took, inside the gilt frame.
+
+### How a step branches (`Inks.choose`)
+
+A page evolves every 4 levels. That step takes **the monster ink written most since the last
+evolution** (the first step looks at levels 2 to 4, the next at 5 to 8, then 9 to 12). The
+book's own ink never competes: one dose among three plain levels is enough to steer a step.
+A tie goes to the newest ink. No monster ink at all makes a plain step (the evolution as it
+was before Phase 3). **Any pale ink in the window makes the step pale**, once per book.
+
+Thin books have three steps on their one page, medium books two on each page, thick books
+one. So a thin book grows deep and particular, a thick book wide.
+
+### Branches per kind (`BRANCHES`)
+
+Each step multiplies or adds on top of the plain evolution (bolt volleys, wider bursts,
+bigger zones and so on still happen). Steps stack. Rampart is an earth zone but grows as a
+**wall** (`branch_kind` in `SPELLS`).
+
+| kind | quick | heavy | stubborn |
+|---|---|---|---|
+| bolt | **Splintered**: read x0.85, one more shot, tighter volley, faster and smaller, x0.74 damage | **Leaden**: read x1.1, one shot fewer, bigger and slower, knocks back (a volley once, not once per shot), x1.38 damage | **Unbroken**: pierces two more, flies longer, x0.88 damage |
+| chain | **Skittering**: read x0.82, one more jump, x0.86 damage | **Thunderous**: read x1.12, one jump fewer, each strike staggers, x1.35 damage | **Lingering**: bites each target again half a second later (45%), reaches further, x0.8 |
+| nova | **Snapping**: read x0.75, a little smaller, less push, x0.88 | **Crushing**: read x1.15, x1.25 reach, throws them back hard, x1.0 | **Steadfast**: a second pulse (40%), and harm turned aside (40%) for 3 s after, x0.78 |
+| zone | **Flickering**: read x0.8, bites faster, ends sooner, x0.9 | **Swallowing**: read x1.12, x1.25 wide, slows more, x0.9 | **Abiding**: lasts x1.5, harm turned aside (35%) while you stand in it, x0.75 |
+| wall | **Hasty**: read x0.7, stands x0.75 as long, cheaper | **Shoving**: x1.2 wide, throws out whatever stands where it rises | **Unyielding**: stands x1.5 as long, harm turned aside inside it, x0.8 |
+| dash | **Darting**: read x0.8, cheaper, a little shorter, x0.88 | **Trampling**: read x1.12, x1.4 wide, a little shorter, knocks them aside, x1.2 | **Weathering**: dodges twice as long, harm turned aside for 1.5 s after, x0.9 |
+
+A branched spell takes the newest monster-ink step's word: "Splintered Ember Bolt II",
+"Leaden Ember Bolt III". The path is drawn on the book page (see below).
+
+How they look (`element_fx.gd` `mark()`, `world.gd` `_mark_ring()`), by shape as well as
+colour: quick trails thin speed strokes and snaps out a fine fast ring; heavy is drawn bigger
+with a thick dark rim; stubborn has a double rule (two thin rings close together); pale has a
+faint grey halo. While harm is being turned aside you wear a double ring in stubborn green.
+
+### The pale (`PALE`)
+
+One odd behaviour per book, on whichever page takes it first, with a margin note:
+
+| kind | name | what it does |
+|---|---|---|
+| bolt | Returning | flies its whole flight, then turns and comes back to you, striking the first thing it meets that it didn't strike going out (70% damage on the way home, x0.85 overall) |
+| chain | Circling | after its last jump it goes back to where it began and strikes that one again |
+| nova | Inward | pulls them in to you instead of pushing them away |
+| zone | Following | sits on you and walks with you |
+| wall | Caging | rises on the enemy nearest your aim; nothing inside when it rose can get out |
+| dash | Echoing | a moment later you are pulled back along the line, striking again (60%) |
+
+After that the pale pot is gone, the pale vial shows a strike through it, and guardians stop
+leaving pale ink.
+
+### Bare hands (`HAND_BRANCHES`)
+
+When a move grows at a rest (Jab, Shove or Sidestep, two steps each) and you carry quick,
+heavy or stubborn ink, the rest asks "My hands are ready to change. Dip them first?" with the
+pots and "Leave them as they are". Your hands never hold the pale ("It wants a book."). With no
+monster ink the step stays plain and nothing is asked. Jab: flicking (quicker, lighter),
+hammering (slower, harder, knocks back), driving (reaches through to a second one). Shove:
+snapping, heaving, bracing (harm turned aside after). Sidestep: darting (cheaper), barging
+(through them, knocking them aside), weathering (dodges longer). Each has a journal line.
+
+### The book page
+
+Under each spell's name, a small path that forks at every evolution the thickness allows:
+quick forks up, heavy runs straight on, stubborn forks down, pale loops. The way it went is
+inked in its ink (gilt for a plain step), the ways it didn't go are faint, and steps still to
+come are faint forks. Under it, "Written in quick, then heavy". No numbers.
+
+### Saves
+
+**Character save version 6**: `vials` (doses per ink), `pale_used`, per page `inks` (the pot
+each level was written with) and `branch` (the ink each evolution took), and per move in
+`hands.branch` plus `hands.dip` (a dip still waiting). Migration: empty vials, the pale unused,
+every level already written counts as the book's own ink and every evolution already reached
+is a plain step, so an older book plays exactly as before. `ui.vials` starts hidden.
+
+### F1
+
+New "Monster inks" section: every vial's doses and size, drops lying, whether the pale is
+used, and for each page its path, the inks written since its last step and which ink the next
+step would take, plus the branched read time, damage, ink cost and every changed number.
+Bare hands: each move's dips. New button: "Fill every ink vial".
+
+### Balance after Phase 3 (`--balance --only=branches`)
+
+Every element, thickness and branch path (245 book paths: every mix of plain, quick, heavy and
+stubborn over the steps a thickness allows, and pale first then the rest), 6 runs each: a bot
+with that book at the path's Lv 11, then the time to earn 1.5 times the Reach XP test.
+Compared with the same book's average over all its paths, more than 20% marked:
+
+| book | avg (s) | paths | outside ±20% | widest |
+|---|---|---|---|---|
+| fire thin / medium / thick | 191 / 223 / 230 | 30 / 14 / 5 | 6 / 2 / 0 | 42% / 31% / 13% |
+| water | 152 / 195 / 218 | 30 / 14 / 5 | 2 / 0 / 0 | 24% / 12% / 12% |
+| earth | 200 / 251 / 222 | 30 / 14 / 5 | 2 / 0 / 0 | 24% / 18% / 7% |
+| wind | 159 / 170 / 150 | 30 / 14 / 5 | 3 / 3 / 0 | 41% / 26% / 14% |
+| lightning | 187 / 231 / 182 | 30 / 14 / 5 | 4 / 0 / 0 | 29% / 11% / 6% |
+
+223 of 245 paths are within ±20%, and every medium and thick book except two medium fire and
+three medium wind paths. Bare hands (two dips on the mixed style, Lv 4 Fields, 18 runs): every
+path within ±20% (widest exactly 20%, plain then stubborn).
+
+How it got there (five passes): quick was much too weak and stacked heavy much too strong at
+first; quick got more shots and faster reads, heavy less damage. Then the pale returning bolt
+paired with stubborn pierce (up to 46% fast): it now pierces nothing on the way home and
+strikes only something it didn't strike going out. A heavy volley knocked a monster back once
+per shot, throwing it out of range; now once per volley.
+
+What's left, and why it's left: the plain path itself swings by up to 18% between paths of
+the same book, so with 6 runs a single cell outside ±20% isn't meaningful on its own. One thing
+does look real: **quick, quick, then heavy is slow on thin books** in four elements (+21% to
++42%): two quick steps make many small shots, and then heavy takes one away and pushes
+monsters out of the way of the rest. Earth medium is the slowest book overall (+27% on the
+average of all books) and wind thick the fastest (-24%); both were like that before Phase 3.
+
+### Deferred or not quite right yet (The Unwritten, Phase 3)
+
+- **Quick, quick, heavy on a thin book** (above).
+- **The pale usually goes into the first branch**, because the first guardian falls before the
+  book (see `FIRST_HOUR.md`).
+- **Vials are full by the end of the first hour** for most bots.
+- **Branch looks are marks on the existing spell shapes** (speed strokes, a thick rim, a double
+  rule, a pale halo), not new shapes. Readable in the screenshots, but subtle at a distance.
+- **Mira doesn't use inks.** Her spells stay plain until Phase 8's shared caster code.

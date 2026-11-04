@@ -6,6 +6,7 @@ extends RefCounted
 ##             rest grows the move one step (HAND_GROWTH)
 ##   secrets   small combos, written into the journal the first time (HAND_SECRETS)
 ##   tint      your fist takes on the colour of the element you lean toward (HAND_TINT)
+##   dips      each growth step can be steered with monster ink (inks.gd, HAND_BRANCHES)
 ## Saved in ch.hands. Numbers in the "Bare hands" block of game_data.gd.
 
 var w
@@ -24,6 +25,10 @@ static func ensure(ch: Dictionary) -> void:
 			ch.hands[k] = {}
 	if not ch.hands.has("learned"):
 		ch.hands.learned = []
+	if not ch.hands.has("branch"):
+		ch.hands.branch = {}
+	if not ch.hands.has("dip"):
+		ch.hands.dip = ""
 
 
 func h() -> Dictionary:
@@ -89,6 +94,7 @@ func on_rest() -> Array:
 		while out.size() < room and t < G.at.size() and int(h().uses.get(move, 0)) >= int(G.at[t]):
 			out.append(["grew_%s_%d" % [move, t + 1], String(G.lines[t])])
 			t += 1
+			w.inks.offer_dip(move)   # The Unwritten, Phase 3: you may dip the growing hand in monster ink
 		h().tier[move] = t
 	return out
 
@@ -142,8 +148,8 @@ func designer_text() -> String:
 	t += "[i]Growth[/i] (meaningful uses; grows at the next rest)\n"
 	for move in GameData.HAND_GROWTH:
 		var G: Dictionary = GameData.HAND_GROWTH[move]
-		t += "%s · step %d/%d · %d uses (next at %s)\n" % [move, tier(move), G.at.size(), int(h().uses.get(move, 0)),
-			str(G.at[tier(move)]) if tier(move) < G.at.size() else "-"]
+		t += "%s · step %d/%d · %d uses (next at %s) · dipped in %s\n" % [move, tier(move), G.at.size(), int(h().uses.get(move, 0)),
+			str(G.at[tier(move)]) if tier(move) < G.at.size() else "-", str(h().get("branch", {}).get(move, []))]
 	t += "[i]Hand secrets[/i]\n"
 	for id in GameData.HAND_SECRETS:
 		t += "%s %s\n" % ["✓" if found(id) else "·", id]

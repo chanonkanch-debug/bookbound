@@ -5,7 +5,9 @@ extends Node
 ##   screenshots to the user folder: every element's bolts, zones and bursts side by side,
 ##   monsters at each point of a wind-up, and every reading state (reading, ready, overcharged,
 ##   fizzled, broken, too little ink, nearly dead), an erasure site in every state (bare,
-##   cleared, the restoring wave, restored, fading), a torn page and the Hearth's windows.
+##   cleared, the restoring wave, restored, fading), a torn page and the Hearth's windows,
+##   and (The Unwritten, Phase 3) one book's pages grown five ways, the ink drops and vials,
+##   the pots at a rest, the book's branch paths and the bare-hands dip.
 ## `-- --stress` builds the heaviest scene the game allows (most monsters, burning grass,
 ##   puddle combos, every zone at once, lingering splatters) and prints how long the rules
 ##   and a full frame take. 16.7 ms per frame is 60 FPS.
@@ -211,7 +213,94 @@ func run_showcase() -> void:
 	await _shot("showcase_5_torn_pages")
 	w.fragments_ui.close()
 	w.camera.zoom = Vector2.ONE
+	await _showcase_inks()
 	print("showcase done")
+
+
+## 6. The Unwritten, Phase 3: one book's pages grown five ways (plain, quick, heavy, stubborn,
+## pale) side by side, the ink drops and vials, the pots at a rest, the book's branch paths,
+## and the dip for bare hands.
+func _showcase_inks() -> void:
+	_book("earth")
+	await _world_at(Vector2(0, 1000))
+	var base: Vector2 = Vector2(-520, 760)
+	var looks := ["plain", "quick", "heavy", "stubborn", "pale"]
+	for c in looks.size():
+		var x: Vector2 = base + Vector2(c * 260, 0)
+		for i in 3:
+			w.ch.spells[i].branch = [looks[c]]
+			w.player.position = x + Vector2(0, i * 170)
+			var n_pj: int = w.projectiles.size()
+			var n_rg: int = w.rings.size()
+			w.perform(Game.spell_stats(w.ch.spells[i]), w.player.position + Vector2(160, 0), "player", 1.0)
+			for k in range(n_pj, w.projectiles.size()):
+				var pj: Dictionary = w.projectiles[k]
+				pj.p += pj.v * 0.12
+				pj.v *= 0.001
+				pj.life = 99.0
+				pj.returns = false
+			for k in range(n_rg, w.rings.size()):
+				w.rings[k].life = 99.0
+				w.rings[k].t = 0.0
+				w.rings[k].r0 = w.rings[k].r1 * 0.95
+			for z in w.zones:
+				z.life = 99.0
+				z.t = 1.0
+	w.delayed.clear()
+	w.player.position = base + Vector2(560, -120)
+	w.ally.position = w.player.position + Vector2(0, -40)
+	w.camera.global_position = base + Vector2(560, 180)
+	w.camera.zoom = Vector2(0.85, 0.85)
+	w.camera.position_smoothing_enabled = false
+	await _frames(3)
+	await _shot("showcase_6_branches_earth")
+	# Ink drops of every kind on the ground, and the vials at the bottom right.
+	_book("fire", "thin")
+	await _world_at(Vector2(0, 700))
+	var p0: Vector2 = w.player.position
+	var inks: Array = GameData.Inks.INK_ORDER
+	for k in inks.size():
+		w.inks.drops.append({"p": p0 + Vector2(-90 + k * 60, -50), "ink": inks[k], "t": 0.0})
+	w.ch.vials = {"quick": 5, "heavy": 2, "stubborn": 4, "pale": 1}
+	w.unlock("vials")
+	w.hud.vials.modulate.a = 1.0
+	w.camera.global_position = p0 + Vector2(0, -30)
+	w.camera.zoom = Vector2(2.4, 2.4)
+	w.camera.position_smoothing_enabled = false
+	await _frames(3)
+	await _shot("showcase_6_drops_and_vials")
+	# The pots at a rest, above a thin book's page (fed quick, then heavy).
+	w.camera.zoom = Vector2.ONE
+	w.ch.spells = [{"i": 0, "lvl": 8, "inks": ["plain", "quick", "quick", "heavy", "heavy", "plain", "heavy"], "branch": ["quick", "heavy"]}]
+	w.ch.ink = 4
+	w.rest_ui.visible = true
+	w.paused = true
+	w.rest_ui._open_pages()
+	w.rest_ui.pick_pot("stubborn")
+	await _frames(3)
+	await _shot("showcase_6_pots")
+	w.rest_ui.close()
+	await _frames(40)
+	w.open_book()
+	await _frames(3)
+	await _shot("showcase_6_book_paths")
+	w.book.close()
+	# Bare hands: the dip.
+	var c := Game.new_character("Arin", "orphan")
+	c.level = 3
+	for k in GameData.UI_PARTS:
+		c.ui[k] = k != "book"
+	c.vials = {"quick": 3, "heavy": 1, "stubborn": 2, "pale": 1}
+	Game.ch = c
+	await _world_at(Vector2(0, 500))
+	w.ch.hands.dip = "jab"
+	w.ch.hands.branch = {"jab": []}
+	w.rest_ui.visible = true
+	w.paused = true
+	w.rest_ui._open_dip()
+	await _frames(3)
+	await _shot("showcase_6_bare_dip")
+	w.rest_ui.dip_into("plain")
 
 
 # ================================================================ Stress

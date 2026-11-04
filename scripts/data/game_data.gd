@@ -5,8 +5,12 @@ extends Node
 ## Split files (still reached through GameData):
 ##   scripts/data/lore_data.gd   The Unwritten, Phase 2: erasure sites, restoring, re-erasure,
 ##                               torn pages and their text. Use as GameData.Lore.SITES etc.
+##   scripts/data/ink_data.gd    The Unwritten, Phase 3: monster inks, vials, and how each kind
+##                               of spell (and your bare hands) branches with them.
+##                               Use as GameData.Inks.INKS, GameData.Inks.BRANCHES etc.
 
 const Lore := preload("res://scripts/data/lore_data.gd")
+const Inks := preload("res://scripts/data/ink_data.gd")
 
 const TOWN_RADIUS := 160.0        # The Hearth: safe zone in the middle of the map
 const WORLD_RADIUS := 1500.0      # Edge of the world
@@ -61,7 +65,9 @@ const THICKNESS := {
 
 # ---------------------------------------------------------------- Spells
 # kind: bolt (projectile), nova (burst around you), zone (lingers), dash, chain.
-# Spells evolve every 4 levels (tier 1, 2, 3).
+# Spells evolve every 4 levels (tier 1, 2, 3). Each evolution branches by the monster ink
+# written into it (The Unwritten, Phase 3, scripts/data/ink_data.gd). `branch_kind` picks a
+# different branch table (Rampart grows like a wall, not a zone).
 # Phase 1: there are no cooldowns any more. A spell is gated by its read time and by ink.
 #   read  = minimum seconds you must hold the cast key ("read the page") before releasing
 #   over  = extra seconds of holding that charge it up to OVERCHARGE_CAP more power (0 = no overcharge)
@@ -80,7 +86,7 @@ const SPELLS := {
 	"earth": [
 		{"name": "Stone Shard", "kind": "bolt", "dmg": 26.0, "read": 0.55, "over": 0.7, "mana": 7.0, "speed": 420.0, "pierce": 2},
 		{"name": "Quake", "kind": "nova", "dmg": 50.0, "read": 1.0, "over": 0.8, "mana": 15.0, "radius": 100.0, "slow": 0.55},
-		{"name": "Rampart", "kind": "zone", "dmg": 14.0, "read": 1.2, "over": 0.6, "mana": 16.0, "radius": 80.0, "dur": 9.0, "slow": 0.35, "range": 180.0},
+		{"name": "Rampart", "kind": "zone", "dmg": 14.0, "read": 1.2, "over": 0.6, "mana": 16.0, "radius": 80.0, "dur": 9.0, "slow": 0.35, "range": 180.0, "branch_kind": "wall"},
 	],
 	"wind": [
 		{"name": "Gust", "kind": "bolt", "dmg": 23.0, "read": 0.3, "over": 0.5, "mana": 4.0, "speed": 640.0, "push": 130.0},
@@ -276,7 +282,7 @@ const CHAPTER_TUNING := {
 
 # ================================================================ Phase 2: minimal interface, slow progression
 # The screen starts empty. Each part fades in the first time it matters (no explanation text).
-const UI_PARTS := ["hands", "journal", "book", "margins", "map"]
+const UI_PARTS := ["hands", "journal", "book", "margins", "map", "vials"]   # vials: The Unwritten, Phase 3
 const UI_FADE := 1.6             # seconds a newly unlocked part takes to fade in
 const UNLOCK := {
 	"hands_near": 150.0,         # stance marks appear when a monster first comes this close
@@ -361,7 +367,7 @@ const GIVE_UP_TEXT := "Close this book forever"
 const GIVE_UP_CONFIRM := "Press again to give up this book"
 
 # Saves. Bump SAVE_VERSION when the save format changes and add a step in Game.migrate().
-const SAVE_VERSION := 5         # 5: torn pages found (The Unwritten, Phase 2)
+const SAVE_VERSION := 6         # 5: torn pages found (The Unwritten, Phase 2) · 6: inks and branches (Phase 3)
 const WORLD_SAVE_VERSION := 1   # the world's own save: sites restored, erasure (scripts/world/erasure.gd)
 # Settings, saved in user://settings.cfg (not in the save, so they're the same for every character).
 # Changed in the pause menu (see PAUSE below) or the F1 designer view.
@@ -686,7 +692,7 @@ const PAUSE := {
 # One line per control: [what, keyboard, gamepad, shown once this is true]
 #   "always", or a ch.ui part ("journal", "map", "book", "hands"), "pages" (more than one page or
 #   stance), "learned" (a move learned from a monster), "lastpage" (the Last Page awakened),
-#   "fragments" (a torn page found).
+#   "fragments" (a torn page found), "vials" (a monster's ink carried).
 const KEY_PAGE := [
 	["Walk", "W A S D, or hold the left mouse button", "left stick", "always"],
 	["Aim", "the mouse", "right stick", "hands"],
@@ -696,6 +702,7 @@ const KEY_PAGE := [
 	["Rest", "hold R, or press it once by a fire", "Y", "rested"],
 	["Open my book", "B", "Back", "book"],
 	["My journal", "J", "D-pad up", "journal"],
+	["Choose an ink to write with", "click a pot, or up and down, when I rest", "D-pad up and down, when I rest", "vials"],
 	["Torn pages I found", "Q or E in my book or journal", "a shoulder, in the book", "fragments"],
 	["My map", "M", "D-pad down", "map"],
 	["The last page", "hold 4", "hold the left trigger", "lastpage"],

@@ -73,6 +73,10 @@ func _play(pname: String, total: float) -> void:
 	Game.ch = Game.new_character("Bot", "orphan")
 	wd = await _new_world()
 	wd.go_to_ceremony.connect(func(): ceremony_due = true)
+	# The Unwritten, Phase 3: a newcomer tries whatever pot is there; the careful one leaves
+	# their bare hands alone.
+	wd.bot_pot = "carried"
+	wd.bot_dip = "plain" if pname == "careful" else "carried"
 	clock = 0.0
 	log_lines.clear()
 	minute_rows.clear()
@@ -386,6 +390,7 @@ func _do_ceremony() -> void:
 	await get_tree().process_frame
 	wd = await _new_world()
 	wd.go_to_ceremony.connect(func(): ceremony_due = true)
+	wd.bot_pot = "carried"
 	decided.clear()
 
 
@@ -465,5 +470,9 @@ func _print_report(pname: String) -> void:
 	print("Quiet stretches (3+ minutes with nothing new): %s" % (", ".join(quiet_runs) if not quiet_runs.is_empty() else "none"))
 	print("Found: %s" % ", ".join(knows.keys()))
 	print("Deaths: %d · final level %d (pending %d) · book: %s" % [died, wd.ch.level, Game.pending_level(), "%s %s" % [wd.ch.el, wd.ch.thick] if Game.has_book() else "none"])
+	var paths: Array = []
+	for sl in wd.ch.get("spells", []):
+		paths.append("[%s]" % ", ".join(sl.get("branch", [])))
+	print("Inks: vials %s · pages grew %s · hands dipped %s" % [str(wd.ch.get("vials", {})), " ".join(paths) if not paths.is_empty() else "-", str(wd.ch.hands.get("branch", {}))])
 	print("Erasure sites written back: %d of %d · torn pages found: %d of %d (%s)" % [wd.erasure.restored_count(), GameData.Lore.SITES.size(),
 		wd.ch.get("fragments", []).size(), GameData.Lore.FRAGMENTS.size(), ", ".join(wd.ch.get("fragments", []))])

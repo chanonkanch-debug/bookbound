@@ -3,6 +3,7 @@ extends CanvasLayer
 ## Opening the book is also the "awakening act", checked by the world first.
 
 const UiTheme := preload("res://scripts/ui/ui_theme.gd")
+const InkRules := preload("res://scripts/world/inks.gd")
 
 var w
 var ui_root: Control
@@ -73,6 +74,40 @@ func _ready() -> void:
 	UiTheme.fit(self, ui_root)
 
 
+## The Unwritten, Phase 3: how a page has grown, drawn as a path that forks at each
+## evolution. The way it went is inked in the ink it took (quick forks up, heavy runs
+## straight on, stubborn forks down, pale leaves the line in a loop); the ways it didn't go
+## are faint. Steps still to come are faint forks. No numbers.
+class BranchPath extends Control:
+	var path: Array = []
+	var steps := 1
+	var el_col := Color.BLACK
+	func _draw() -> void:
+		var C: Dictionary = GameData.COLORS
+		var y := size.y / 2.0
+		var x := 8.0
+		var seg := (size.x - 24.0) / float(maxi(1, steps))
+		draw_circle(Vector2(x, y), 3.5, el_col)
+		var cy := y
+		for k in steps:
+			var x1 := x + seg
+			var done := k < path.size()
+			var ink: String = String(path[k]) if done else ""
+			# The three ways it could go, faint.
+			for dy in [-7.0, 0.0, 7.0]:
+				draw_line(Vector2(x + seg * 0.45, cy), Vector2(x1, cy + dy), Color(C.ink_soft, 0.35), 1.2)
+			draw_line(Vector2(x, cy), Vector2(x + seg * 0.45, cy), Color(el_col, 0.85) if done else Color(C.ink_soft, 0.35), 1.5)
+			if done:
+				var col: Color = C.gilt if ink == "plain" else InkRules.color(ink)
+				var ny: float = cy + float({"quick": -7.0, "stubborn": 7.0}.get(ink, 0.0))
+				draw_line(Vector2(x + seg * 0.45, cy), Vector2(x1, ny), col, 2.5 if ink == "heavy" else 2.0)
+				if ink == "pale":
+					draw_arc(Vector2(x + seg * 0.75, cy - 5.0), 5.0, 0, TAU, 16, col, 1.5)
+				draw_circle(Vector2(x1, ny), 3.0, col)
+				cy = ny
+			x = x1
+
+
 func _label(text: String, font_size: int, col: Color, center := false) -> Label:
 	var l := Label.new()
 	l.text = text
@@ -93,10 +128,21 @@ func open(awakened_now: bool) -> void:
 	left.add_child(_label("%s's book" % ch.name, 30, C.ink))
 	left.add_child(_label("%s · %s" % [t.name, e.name], 14, C.ink_soft))
 	left.add_child(_label(e.passive, 15, C.ink))
+	var steps := int(Game.max_spell_level() / 4.0)
 	for i in ch.spells.size():
 		var s: Dictionary = ch.spells[i]
 		var mark := "▸" if i == w.casting.page else "•"
 		left.add_child(_label("%s  %s" % [mark, Game.spell_name(s)], 15, C.ink))
+		if steps > 0:
+			var bp := BranchPath.new()
+			bp.path = s.get("branch", [])
+			bp.steps = steps
+			bp.el_col = C[ch.el]
+			bp.custom_minimum_size = Vector2(40.0 + 56.0 * steps, 24)
+			bp.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+			left.add_child(bp)
+			if not bp.path.is_empty():
+				left.add_child(_label("%s %s" % [String(GameData.Inks.LINES.written_head), InkRules.path_words(bp.path)], 12, C.ink_soft))
 	if int(ch.ink) > 0:
 		left.add_child(_label(GameData.BOOK_TEXT.ink_waiting, 14, C.ink_soft))
 	# Margin notes: hidden-chapter hints and spell secrets, once they've appeared.
