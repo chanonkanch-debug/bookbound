@@ -33,7 +33,10 @@ static func make() -> Theme:
 	t.set_stylebox("pressed", "Button", box(C.panel, C.gilt, 2))
 	t.set_stylebox("hover_pressed", "Button", box(C.panel, C.gilt, 2))
 	t.set_stylebox("disabled", "Button", box(clear, C.rule))
-	t.set_stylebox("focus", "Button", StyleBoxEmpty.new())
+	# A thin gilt frame on the chosen button, so a gamepad can see where it is.
+	var focus_b := box(Color(0, 0, 0, 0), C.gilt, 2)
+	focus_b.draw_center = false
+	t.set_stylebox("focus", "Button", focus_b)
 
 	t.set_type_variation("PrimaryButton", "Button")
 	for k in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_hover_pressed_color"]:
@@ -53,3 +56,15 @@ static func make() -> Theme:
 	t.set_stylebox("panel", "PanelContainer", box(C.panel, C.rule, 1, 4, 16, 16))
 	t.set_stylebox("panel", "ScrollContainer", StyleBoxEmpty.new())
 	return t
+
+
+## Scales a whole interface layer by the "ui_scale" setting. `root` is the layer's top
+## Control: it is resized so that, once scaled, it still covers exactly the screen.
+static func fit(layer: CanvasLayer, root: Control) -> void:
+	var s: float = float(Game.settings.get("ui_scale", 1.0))
+	layer.scale = Vector2(s, s)
+	root.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	root.position = Vector2.ZERO
+	var vp := layer.get_viewport()
+	if vp != null:
+		root.size = vp.get_visible_rect().size / s

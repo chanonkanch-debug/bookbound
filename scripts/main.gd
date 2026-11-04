@@ -12,6 +12,22 @@ func _ready() -> void:
 	if "--autotest" in OS.get_cmdline_user_args():
 		_autotest()
 		return
+	for mode in ["--showcase", "--stress"]:
+		if mode in OS.get_cmdline_user_args():
+			var sc := preload("res://scripts/dev/showcase.gd").new()
+			add_child(sc)
+			if mode == "--showcase":
+				await sc.run_showcase()
+			else:
+				await sc.run_stress()
+			get_tree().quit()
+			return
+	if "--firsthour" in OS.get_cmdline_user_args():
+		var fh := preload("res://scripts/dev/first_hour.gd").new()
+		add_child(fh)
+		await fh.run_first_hour()
+		get_tree().quit()
+		return
 	if "--balance" in OS.get_cmdline_user_args():
 		var bot := preload("res://scripts/dev/balance.gd").new()
 		add_child(bot)
@@ -117,6 +133,15 @@ func _autotest() -> void:
 			nothing = false
 	_check(nothing and w.hud.dock.modulate.a < 0.01, "a new player sees only the world: no interface parts yet")
 	_check(not Game.show_numbers(), "show_numbers is off by default")
+	# The journal starts with your first kill: a discovery noticed before it waits for it.
+	var early_line: String = GameData.TERRAIN_LINES.open_reach
+	w.unlock("journal")
+	w.discovery.saw_terrain("open_reach")
+	var waited: bool = not (early_line in Game.ch.journal)
+	w.journal("first_kill")
+	var jl: Array = Game.ch.journal
+	_check(waited and jl.find(early_line) > jl.find(GameData.JOURNAL.first_kill), "a discovery before the first kill waits, then follows it")
+	Game.ch.ui.journal = false
 	print("Bare hands:")
 	# Walk out, pull a few monsters close, then use every stance on them.
 	w.player.steer = Vector2.RIGHT
@@ -165,7 +190,7 @@ func _autotest() -> void:
 	for e in w.enemies:
 		e.queue_free()
 	w.enemies.clear()
-	w.player.position = Vector2(300, 300)
+	w.player.position = Vector2(0, 300)
 	w.player.hp = Game.max_hp() * 0.5
 	w.rest_held = true
 	w.player.steer = Vector2.ZERO
@@ -270,6 +295,7 @@ func _autotest() -> void:
 			break
 	_check(broke, "taking a hit can break a read")
 	# Monsters telegraph: an Inkling next to you winds up before it bites.
+	_clear(w)   # no lingering zone from the casts above may stagger it
 	w.spawn(true)
 	var foe = w.enemies[0]
 	foe.position = w.player.position + Vector2(30, 0)
@@ -326,6 +352,12 @@ func _autotest() -> void:
 	await _step(w, 30)
 	print("Discoveries (Phase 3):")
 	await _test_discoveries(w)
+	print("Polish (The Unwritten, Phase 1):")
+	var keep_world: Dictionary = Game.world
+	await _test_polish(w)
+	print("The Unwritten (Phase 2):")
+	await _test_unwritten(w)
+	Game.world = keep_world
 	print("Saves (Phase 2):")
 	_test_migration()
 	print("Autotest finished with %d failure(s). Level %d, enemies alive %d" % [failures, w.ch.level, w.enemies.size()])
@@ -349,6 +381,7 @@ func _test_migration() -> void:
 
 
 func _clear(w) -> void:
+	w.spawn_t = 60.0   # no new monster wanders into the middle of a test
 	for e in w.enemies:
 		e.queue_free()
 	w.enemies.clear()
@@ -417,7 +450,7 @@ func _test_discoveries(w) -> void:
 			pool = pt
 			break
 	var a = _spawn_at(w, 0, pool.p + Vector2(-8, 0))
-	var b = _spawn_at(w, 0, pool.p + Vector2(pool.r * 0.6, pool.r * 0.4))
+	var _b = _spawn_at(w, 0, pool.p + Vector2(pool.r * 0.6, pool.r * 0.4))
 	var far = _spawn_at(w, 0, pool.p + Vector2(0, -pool.r * 0.7))
 	w.player.position = pool.p + Vector2(-pool.r - 120.0, 0)
 	var hp_far: float = far.hp
@@ -523,3 +556,392 @@ func _test_hands(w) -> void:
 	await _step(w, 30)
 	w.auto_rest_ui = keep_auto
 	_clear(w)
+
+
+# ================================================================ The Unwritten, Phase 1: polish
+
+## A separate world with no scene switching attached, for tests that would otherwise
+## jump to the ceremony screen.
+func _side_world():
+	var sw = World.new()
+	add_child(sw)
+	await get_tree().process_frame
+	sw.set_process(false)
+	_clear(sw)
+	return sw
+
+
+func _bare_char(level := 1) -> Dictionary:
+	var c := Game.new_character("Test", "orphan")
+	c.level = level
+	return c
+
+
+func _book_char(el := "earth", aspect := "stillness") -> Dictionary:
+	var c := Game.new_character("Test", "orphan")
+	c.el = el
+	c.thick = "medium"
+	c.level = 6
+	c.spells = [{"i": 0, "lvl": 3}, {"i": 1, "lvl": 2}]
+	c.aspect = {"id": aspect, "progress": 0, "stage": 0, "awakened": false, "margins": [], "need": 4, "streak": 3}
+	c.ui.book = true
+	return c
+
+
+func _test_polish(main_w) -> void:
+	var keep: Dictionary = Game.ch
+	var keep_settings: Dictionary = Game.settings.duplicate()
+	main_w.set_process(false)
+	main_w.visible = false
+	main_w.hud.visible = false
+
+	# -- Settings and the pause menu
+	Game.ch = _bare_char()
+	var w = await _side_world()
+	w.pause_ui.open()
+	_check(w.pause_ui.visible and w.paused, "Esc / Start opens the pause menu and the world waits")
+	var lines: Array = w.pause_ui.key_lines(Game.ch)
+	var labels: Array = lines.map(func(l): return l[0])
+	_check("Walk" in labels and not ("The last page" in labels) and not ("Open my book" in labels), "the key page lists only what this character has found (no book, no last page yet)")
+	var lp := _book_char("fire", "lastpage")
+	lp.aspect.awakened = true
+	_check("The last page" in w.pause_ui.key_lines(lp).map(func(l): return l[0]), "the last page appears on the key page only once it has awakened")
+	var shake0: bool = Game.settings.shake
+	w.pause_ui._cycle("shake")
+	_check(Game.settings.shake != shake0, "a setting changes from the pause menu")
+	var cf := ConfigFile.new()
+	_check(cf.load(Game.SETTINGS_PATH) == OK and bool(cf.get_value("settings", "shake")) == Game.settings.shake, "settings are saved to the settings file")
+	w.pause_ui._cycle("ui_scale")
+	_check(not is_equal_approx(w.hud.scale.x, 1.0) and is_equal_approx(w.hud.scale.x, float(Game.settings.ui_scale)), "the page size setting scales the interface")
+	w.pause_ui.close()
+	_check(not w.paused, "closing the pause menu returns to the world")
+	_check(not GameData.SETTINGS.shake and GameData.SETTINGS.hitstop, "shake starts off and hit-pause starts on")
+	Game.settings.hitstop = true
+	var foe = _spawn_at(w, 1, w.player.position + Vector2(60, 0))
+	w.hit(foe, foe.max_hp * 0.3, "none", "player")
+	_check(w.hitstop > 0.0, "a heavy hit holds the world still for a moment (hit-pause on)")
+	w.hitstop = 0.0
+	Game.settings.hitstop = false
+	w.hit(foe, foe.max_hp * 0.3, "none", "player")
+	_check(w.hitstop == 0.0, "no hit-pause when the setting is off")
+	_clear(w)
+
+	# -- Gamepad
+	var pad_ok := true
+	for pair in [["journal", JOY_BUTTON_DPAD_UP], ["map", JOY_BUTTON_DPAD_DOWN], ["pause", JOY_BUTTON_START], ["open_book", JOY_BUTTON_BACK], ["read", JOY_BUTTON_A], ["rest", JOY_BUTTON_Y]]:
+		var found := false
+		for ev in InputMap.action_get_events(pair[0]):
+			if ev is InputEventJoypadButton and ev.button_index == pair[1]:
+				found = true
+		pad_ok = pad_ok and found
+	var stick := false
+	for ev in InputMap.action_get_events("move_left"):
+		if ev is InputEventJoypadMotion:
+			stick = true
+	_check(pad_ok and stick, "a gamepad can move, read, rest, and open the journal, map, book and pause menu")
+
+	# -- First hour fixes
+	w.player.position = Vector2(0, 40)
+	Game.ch.xp = Game.xp_next(1) + 1
+	for f in roundi(float(GameData.NUDGES.rest_fire.after) / DT) + 10:
+		w._update(DT)
+	_check(Game.ch.nudged.get("rest", false), "with a level waiting, sitting by the Hearth fire shows the R nudge")
+	Game.ch.ui.map = true
+	Game.ch.opened.erase("map")
+	w.nudge_t = 0.0
+	for f in roundi(float(GameData.NUDGES.map.after) / DT) + 10:
+		w._update(DT)
+	_check(Game.ch.nudged.get("map", false), "a map that was never opened gets an M nudge")
+	w.designer._refresh()
+	_check(w.designer.text.text.contains("Pacing and feel") and w.designer.text.text.contains("map ✓"), "F1 shows the Phase 1 pacing values")
+	var lurker = _spawn_at(w, 0, Vector2(GameData.TOWN_RADIUS + 30.0, 0))
+	lurker.aggro = true
+	_check(w.can_rest(), "nothing can wake you inside the Hearth")
+	for f in roundi((float(GameData.MONSTERS.hearth_give_up) + 1.0) / DT):
+		w._update(DT)
+	_check(not lurker.aggro, "a monster pacing at the Hearth's edge gives up and wanders off")
+	_clear(w)
+	Game.ch.hands.lessons = {"Inkling": 99, "Blot": 99}
+	Game.ch.hands.uses = {"jab": 999}
+	var got: Array = w.hands.on_rest()
+	_check(got.size() == int(GameData.HAND_REST_MAX), "only one new move or growth per rest; the rest wait for the next one")
+	w.unlock("journal")
+	w.hud.whisper_queue.clear()
+	w.hud.whispering = false
+	for t in ["one", "two", "three"]:
+		w.hud.add_log(t)
+	_check(w.hud.whisper.text == "one" and w.hud.whisper_queue.size() == 2, "journal lines that arrive together wait their turn")
+	for k in int(GameData.FEEL.splat_max) + 20:
+		w._splat(Vector2.ZERO, 5.0, 30.0, 0.3)
+	_check(w.splats.size() == int(GameData.FEEL.splat_max), "lingering splatters are capped")
+	w.queue_free()
+	await get_tree().process_frame
+
+	# -- Hidden chapter hints are spaced out
+	Game.ch = _book_char()
+	w = await _side_world()
+	for k in 4:
+		w.chapter.progress()
+	w._update(DT)
+	var st1: int = int(Game.ch.aspect.stage)
+	for f in 30:
+		w._update(DT)
+	var st2: int = int(Game.ch.aspect.stage)
+	for f in roundi(float(GameData.CHAPTER_TUNING.hint_gap) / DT) + 2:
+		w.chapter.tick(DT)
+	_check(st1 == 1 and st2 == 1 and int(Game.ch.aspect.stage) == 2, "margin hints come one at a time, well apart")
+
+	# -- Edge case: the hidden chapter awakens in the middle of a read
+	w.chapter.flush_hints()
+	var near_foe = _spawn_at(w, 0, w.player.position + Vector2(120, 0))
+	near_foe.spd = 0.0
+	w.player.mana = Game.max_mana()
+	w.read_held = true
+	await _step(w, 4)
+	var mana_mid: float = w.player.mana
+	_check(w.casting.reading and mana_mid < Game.max_mana(), "(setup) reading has started and ink was paid")
+	w.player.still = 1.0
+	w.open_book()
+	_check(Game.ch.aspect.awakened, "(setup) the chapter awakened when the book was opened")
+	_check(not w.casting.reading and w.casting.last_result == "cancelled" and absf(w.player.mana - Game.max_mana()) < 0.01, "opening the book mid-read closes the page and gives the ink back")
+	w.book.close()
+	var casts0: int = w.casting.casts
+	await _step(w, 20)
+	_check(w.casting.casts == casts0 and not w.casting.reading, "still holding the key afterwards doesn't cast by itself")
+	w.read_held = false
+	await _step(w, 2)
+
+	# -- Edge case: dying while reading
+	w.read_held = true
+	await _step(w, 3)
+	w.hurt(99999.0)
+	_check(w.player.dead_t > 0.0 and not w.casting.reading, "dying in the middle of a read ends it")
+	await _step(w, roundi(3.0 / DT))
+	_check(w.player.dead_t <= 0.0 and not w.casting.reading and w.casting.casts == casts0, "after waking, holding the key from before doesn't cast")
+	w.read_held = false
+	await _step(w, 2)
+	w.queue_free()
+	await get_tree().process_frame
+
+	# -- Edge case: resting again while the ceremony is opening
+	Game.ch = _bare_char(GameData.CEREMONY_LEVEL)
+	w = await _side_world()
+	var calls := [0]
+	w.go_to_ceremony.connect(func(): calls[0] += 1)
+	w.player.position = Vector2(0, 30)
+	w.finish_rest()
+	w.finish_rest()
+	w.rest_ui.close()
+	await get_tree().create_timer(0.8).timeout
+	_check(calls[0] == 1, "resting twice while the ceremony is opening opens it once (%d)" % calls[0])
+	w.queue_free()
+	await get_tree().process_frame
+
+	# -- Saves at every stage of the interface appearing
+	var stages := [[], ["hands"], ["hands", "journal"], ["hands", "journal", "margins"], ["hands", "journal", "margins", "map"]]
+	var all_ok := true
+	for book_too in [false, true]:
+		for stg in stages:
+			var c: Dictionary = _book_char() if book_too else _bare_char(3)
+			for k in GameData.UI_PARTS:
+				c.ui[k] = k in stg or (k == "book" and book_too)
+			Game.ch = c
+			Game.save_game()
+			var back: Dictionary = Game.load_game()
+			var same := true
+			for k in GameData.UI_PARTS:
+				same = same and bool(back.ui[k]) == bool(c.ui[k])
+			Game.ch = back
+			var lw = await _side_world()
+			await get_tree().process_frame
+			var dock_on: bool = lw.hud.dock.modulate.a > 0.5
+			var want_dock: bool = (book_too and back.ui.book) or (not book_too and back.ui.hands)
+			var mark_on: bool = lw.hud.journal_mark.modulate.a > 0.5
+			if not (same and dock_on == want_dock and mark_on == bool(back.ui.journal)):
+				all_ok = false
+				print("    stage %s (book %s): same %s dock %s/%s mark %s" % [stg, book_too, same, dock_on, want_dock, mark_on])
+			lw.queue_free()
+			await get_tree().process_frame
+	_check(all_ok, "saving and loading at every stage of the interface keeps exactly what had appeared")
+
+	Game.settings = keep_settings
+	Game.set_setting("shake", keep_settings.shake)
+	Game.ch = keep
+	main_w.visible = true
+	main_w.hud.visible = true
+	await get_tree().process_frame
+
+
+# ================================================================ The Unwritten, Phase 2
+
+func _test_unwritten(main_w) -> void:
+	var keep: Dictionary = Game.ch
+	var keep_settings: Dictionary = Game.settings.duplicate()
+	main_w.set_process(false)
+	main_w.visible = false
+	main_w.hud.visible = false
+	var L = GameData.Lore
+	Game.ch = _book_char("fire", "stillness")
+	var w = await _side_world()
+	var er = w.erasure
+	var all_bare := true
+	for s in L.SITES:
+		all_bare = all_bare and String(er.state(s.id).state) == "erased" and er.paleness(s.id) == 1.0
+	_check(all_bare and L.SITES.size() >= 6, "a new world starts with every erasure site bare (%d sites)" % L.SITES.size())
+	var per_region := {1: 0, 2: 0, 3: 0}
+	for s in L.SITES:
+		per_region[int(s.region)] += 1
+	_check(per_region.values().all(func(n): return n >= 2 and n <= 3), "each region has two or three sites")
+
+	# -- Near a bare site
+	var st0: Dictionary = L.SITES[0]
+	_check(er.strength(st0.p) > 0.99 and er.read_speed(st0.p) < 1.0 and er.ink_regen(st0.p) < 1.0 and er.read_speed(Vector2(0, 0)) == 1.0,
+		"near a bare site spells read slower and ink comes back slower, and nowhere else")
+	w.terrain.patches.append({"kind": "grass", "p": st0.p + Vector2(10, 0), "r": 40.0, "burnt": 0.0, "sd": 0.0, "faded": false})
+	er._fade_patches()
+	_check(w.terrain.at(st0.p + Vector2(10, 0), "grass") == null, "ground near a bare site has faded: grass there won't burn")
+	var gathered := 0
+	for k in 200:
+		var gp = er.gather_point(st0.p + Vector2(300, 0))
+		if gp != null and gp.distance_to(st0.p) < float(st0.r) * 1.2:
+			gathered += 1
+	_check(gathered > 15 and gathered < 160, "monsters gather at a bare site close by (%d of 200 new ones)" % gathered)
+
+	# -- The guardian
+	w.player.position = st0.p + Vector2(float(st0.r) + 120.0, 0)
+	w._update(DT)
+	var g = er.guardians.get(st0.id)
+	_check(er.guardian_alive(st0.id) and g.hp > float(GameData.FOES[int(L.GUARDIANS[1].tier)].hp) * 2.0 and w.enemies.size() >= 2,
+		"coming close wakes the site's guardian and its escorts")
+	var during := 0
+	for k in 100:
+		var gp2 = er.gather_point(st0.p + Vector2(300, 0))
+		if gp2 != null and gp2.distance_to(st0.p) < float(st0.r) * 1.2:
+			during += 1
+	_check(during == 0, "while its guardian is awake, no more monsters gather at that site")
+	_check(is_equal_approx(w._affinity(g, "fire", "player"), 1.0) and is_equal_approx(w._affinity(g, "water", "player"), 1.0), "guardians are made of the pale: no element moves them more than another")
+	g.position = st0.p + Vector2(float(st0.r) * float(L.GUARDIAN_LEASH) + 40.0, 0)
+	w.player.position = st0.p + Vector2(float(st0.r) * float(L.GUARDIAN_LEASH) + 400.0, 0)
+	g.tick(DT)
+	_check(not g.aggro, "a guardian won't chase you far from its site")
+	w.player.position = st0.p
+	_check(not w.can_rest(), "you can't rest at a site while its guardian is awake")
+	w.kill(g, "player")
+	_check(String(er.state(st0.id).state) == "cleared" and Game.ch.journal_ids.has("guardian_first"), "beating the guardian clears the site, and the journal notices")
+	_clear(w)
+	w._update(DT)
+	_check(not er.guardian_alive(st0.id) and w.enemies.size() == 0, "a cleared site doesn't wake another guardian")
+
+	# -- Writing it back
+	w.auto_rest_ui = true
+	w.player.steer = Vector2.ZERO
+	w.player.position = st0.p
+	w.rest_held = true
+	for f in roundi((float(GameData.REST.time) + 0.5) / DT):
+		w._update(DT)
+	w.rest_held = false
+	_check(er.is_restored(st0.id) and er.paleness(st0.id) == 0.0, "resting at the centre of a cleared site writes it back")
+	_check(Game.ch.journal_ids.has("restore_first") and Game.ch.journal_ids.has("site_" + st0.id), "the journal remembers writing it back")
+	_check(st0.p in er.campfires() and er.fx.has(st0.id), "a campfire appears there, and the ink spreads back over it")
+	var calm := 0
+	for k in 400:
+		if er.calm(st0.p + Vector2(20, 0)):
+			calm += 1
+	_check(calm > 200, "fewer monsters appear around a restored site (%d of 400 kept away)" % calm)
+	er._fade_patches()
+	_check(w.terrain.at(st0.p + Vector2(10, 0), "grass") != null, "the ground there reacts again once it is written back")
+	_check(er.read_speed(st0.p) == 1.0, "spells read normally at a restored site")
+	w.designer._refresh()
+	var dtxt: String = w.designer.text.text
+	_check(dtxt.contains("Erasure sites") and dtxt.contains("Torn pages") and dtxt.contains("restored"), "F1 shows the sites, their state and the torn pages")
+
+	# -- Torn pages
+	var pg = w.pages
+	var ledger: Dictionary = pg.by_id("ledger")
+	_check(String(ledger.site) == st0.id and pg.where(ledger) != null, "a torn page appears at the site once it is written back")
+	_check(pg.where(pg.by_id("spilled_ink")) == null, "pages at sites still bare aren't there yet")
+	w.player.position = pg.where(ledger)
+	w._update(DT)
+	_check(Game.ch.fragments == ["ledger"] and Game.ch.journal_ids.has("fragment_first"), "walking over a torn page picks it up, and the first one writes a journal line")
+	var hymn: Dictionary = pg.by_id("hymn")
+	w.player.position = hymn.p
+	w._update(DT)
+	_check(Game.ch.fragments == ["ledger", "hymn"], "pages are kept in the order found, not in story order")
+	var stacks := 0
+	var placed_in_stacks := 0
+	for f in L.FRAGMENTS:
+		if String(f.where) == "stacks":
+			stacks += 1
+			if pg.where(f) != null:
+				placed_in_stacks += 1
+	_check(L.FRAGMENTS.size() == 12 and stacks == 3 and placed_in_stacks == 0, "twelve torn pages; the last three wait in the Stacks and aren't lying anywhere yet")
+	_check("Torn pages I found" in w.pause_ui.key_lines(Game.ch).map(func(l): return l[0]), "the key page lists the torn pages once one is found")
+	w.open_book()
+	_check(w.book.visible and w.book.pages_btn.visible, "the book has its torn pages at the back")
+	w.book.pages_btn.pressed.emit()
+	_check(w.fragments_ui.visible and not w.book.visible, "turning to them shows the torn pages")
+	w.close_overlays()
+	_check(w.book.visible and not w.fragments_ui.visible, "putting them away goes back to the book")
+	w.close_overlays()
+	w.fragments_ui.open(null)
+	_check(w.fragments_ui.visible and w.fragments_ui.sheet.title == String(hymn.title), "the torn pages open on the newest one")
+	w.fragments_ui.turn(-1)
+	_check(w.fragments_ui.sheet.title == String(ledger.title), "and turn back to the older ones")
+	_check(not w.fragments_ui.sheet.body.is_valid_int() and not w.fragments_ui.counter.text.contains("1"), "no numbers on the torn pages")
+	w.close_overlays()
+	_check(not w.fragments_ui.visible and not w.paused, "Esc puts the torn pages away")
+
+	# -- Slow re-erasure
+	var ws: Dictionary = Game.world
+	var R: Dictionary = L.REERASE
+	w.region = 2
+	ws.seen["1"] = float(ws.time) - float(R.grace) * 0.5
+	er.tick(1.0)
+	_check(er.paleness(st0.id) == 0.0, "a restored site doesn't fade while its region was visited recently")
+	ws.seen["1"] = float(ws.time) - float(R.grace) - 1.0
+	for k in 20:
+		er.tick(float(R.fade_time) * float(R.warn_at) / 10.0)
+	_check(er.paleness(st0.id) > float(R.warn_at) and Game.ch.journal_ids.has("reerase_first") and er.is_restored(st0.id),
+		"left alone long enough, a restored site starts to fade, and the journal notices")
+	w.region = 1
+	var p1: float = er.paleness(st0.id)
+	er.tick(60.0)
+	_check(is_equal_approx(er.paleness(st0.id), p1), "visiting the region stops the fading")
+	w.region = 2
+	Game.settings.reerase = false
+	ws.seen["1"] = float(ws.time) - float(R.grace) - 1.0
+	er.tick(float(R.fade_time))
+	_check(is_equal_approx(er.paleness(st0.id), p1), "with the setting off, nothing fades")
+	Game.settings.reerase = true
+	for k in 10:
+		er.tick(float(R.fade_time) / 4.0)
+	_check(String(er.state(st0.id).state) == "erased" and not (st0.p in er.campfires()), "fully faded, the site is bare again and its fire goes out")
+	w.player.position = st0.p + Vector2(float(st0.r) + 100.0, 0)
+	er.tick(DT)
+	_check(er.guardian_alive(st0.id), "and its guardian comes back")
+	_check(Game.ch.fragments.size() == 2, "torn pages already found stay found")
+
+	# -- Saves
+	var st1: Dictionary = L.SITES[1]
+	er.restore(String(st1.id))
+	Game.save_game()
+	var back: Dictionary = Game.load_game()
+	_check(back.fragments == ["ledger", "hymn"] and String(Game.world.sites[st1.id].state) == "restored" and String(Game.world.sites[st0.id].state) == "erased",
+		"saving and loading keeps the world (sites written back, faded) and the torn pages")
+	var old := _book_char("water", "echo")
+	old.erase("fragments")
+	old.save_version = 4
+	old.level = 9
+	var mig: Dictionary = Game.migrate(old.duplicate(true))
+	_check(int(mig.save_version) == GameData.SAVE_VERSION and mig.fragments == [] and int(mig.level) == 9 and String(mig.el) == "water" and String(mig.aspect.id) == "echo",
+		"an older save gains torn pages without losing its book, level or chapter")
+	var fresh: Dictionary = Game.migrate_world({"sites": {st1.id: {"state": "restored", "pale": 0.2}}})
+	_check(String(fresh.sites[st1.id].state) == "restored" and fresh.sites.size() == L.SITES.size(), "an older world keeps what was written back and gains any new sites")
+	w.queue_free()
+	await get_tree().process_frame
+
+	Game.settings = keep_settings
+	Game.ch = keep
+	main_w.visible = true
+	main_w.hud.visible = true
+	await get_tree().process_frame

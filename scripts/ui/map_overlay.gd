@@ -2,7 +2,10 @@ extends CanvasLayer
 ## A hand-drawn map (press M once you have one). Appears only after you find a
 ## map scrap or have walked all three regions. No numbers, just ink.
 
+const UiTheme := preload("res://scripts/ui/ui_theme.gd")
+
 var w
+var ui_root: Control
 var C: Dictionary = GameData.COLORS
 var canvas: Control
 
@@ -23,7 +26,7 @@ class MapCanvas extends Control:
 		var names := [[0.0, "The Hearth"], [380.0, GameData.REGIONS[1].name], [850.0, GameData.REGIONS[2].name], [1300.0, GameData.REGIONS[3].name]]
 		for n in names:
 			Ink.text_c(self, c + Vector2(0, -float(n[0]) * sc - 6.0), n[1], 13, C.ink_soft)
-		for fire in GameData.CAMPFIRES:
+		for fire in w.erasure.campfires():   # restored sites have a fire of their own
 			var fp: Vector2 = c + fire * sc
 			draw_colored_polygon(Ink.blob(fp, 4.0, 1.0, 0.0), C.fire)
 		var pp: Vector2 = c + w.player.position * sc
@@ -34,7 +37,8 @@ class MapCanvas extends Control:
 func _ready() -> void:
 	layer = 10
 	visible = false
-	var root := Control.new()
+	ui_root = Control.new()
+	var root := ui_root
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(root)
 	var dim := ColorRect.new()
@@ -45,6 +49,7 @@ func _ready() -> void:
 	canvas.w = w
 	canvas.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(canvas)
+	UiTheme.fit(self, ui_root)
 
 
 func open() -> void:

@@ -5,6 +5,7 @@ extends RefCounted
 ##   stone   earth zones placed on stones last longer
 ##   open    bare, windswept ground: wind spells reach further from it
 ## The layout is the same every time (TERRAIN.seed), so players can learn it.
+## Near a bare erasure site a patch is `faded` and doesn't react at all (set by erasure.gd).
 ## Numbers: TERRAIN in game_data.gd.
 
 var patches: Array = []    # {kind, p, r, burnt}
@@ -33,7 +34,7 @@ func _init() -> void:
 					break
 			if clash:
 				continue
-			patches.append({"kind": kind, "p": p, "r": r, "burnt": 0.0, "sd": rng.randf() * 9.0})
+			patches.append({"kind": kind, "p": p, "r": r, "burnt": 0.0, "sd": rng.randf() * 9.0, "faded": false})
 			placed += 1
 
 
@@ -45,7 +46,7 @@ func tick(dt: float) -> void:
 ## The patch of this kind under `pos` (burnt grass doesn't count), or null.
 func at(pos: Vector2, kind: String):
 	for pt in patches:
-		if pt.kind == kind and pos.distance_to(pt.p) < pt.r and not (kind == "grass" and pt.burnt > 0.0):
+		if pt.kind == kind and pos.distance_to(pt.p) < pt.r and not (kind == "grass" and pt.burnt > 0.0) and not pt.faded:
 			return pt
 	return null
 
@@ -54,6 +55,6 @@ func at(pos: Vector2, kind: String):
 func overlapping(pos: Vector2, r: float, kind: String) -> Array:
 	var out: Array = []
 	for pt in patches:
-		if pt.kind == kind and pos.distance_to(pt.p) < pt.r + r and not (kind == "grass" and pt.burnt > 0.0):
+		if pt.kind == kind and pos.distance_to(pt.p) < pt.r + r and not (kind == "grass" and pt.burnt > 0.0) and not pt.faded:
 			out.append(pt)
 	return out

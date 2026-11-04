@@ -61,7 +61,7 @@ func tick(dt: float) -> void:
 	var in_town := position.length() < GameData.TOWN_RADIUS
 	hp = minf(Game.max_hp(), hp + (30.0 if in_town else 1.2) * dt)
 	var regen: Dictionary = GameData.INK_REGEN
-	mana = minf(Game.max_mana(), mana + float(regen.hearth if in_town else regen.field) * dt)
+	mana = minf(Game.max_mana(), mana + float(regen.hearth if in_town else regen.field) * w.erasure.ink_regen(position) * dt)
 	if in_town:
 		w.streak = 0
 	if w.streak_t > 0.0:
@@ -120,8 +120,15 @@ func _draw() -> void:
 	if dodge_t > 0.0:
 		draw_arc(Vector2.ZERO, r + 4.0, 0, TAU, 24, Color(C.paper, 0.8), 2.0)
 	if bound:
-		draw_rect(Rect2(11, -6, 9, 12), C.ink)       # your book
-		draw_rect(Rect2(11, -6, 2, 12), el_c)
+		var cs = w.casting
+		var cost: float = cs.page_cost()
+		if mana < cost and not cs.reading:
+			# Too little ink for the open page: the book in your hand goes hollow, edged red.
+			draw_rect(Rect2(11, -6, 9, 12), C.paper)
+			draw_rect(Rect2(11, -6, 9, 12), C.danger, false, 1.5)
+		else:
+			draw_rect(Rect2(11, -6, 9, 12), C.ink)       # your book
+			draw_rect(Rect2(11, -6, 2, 12), el_c)
 	else:
 		# A bare fist, tinted toward the element your fighting leans to.
 		var fist: Color = C.ink

@@ -6,18 +6,21 @@ extends CanvasLayer
 const UiTheme := preload("res://scripts/ui/ui_theme.gd")
 
 var w
+var ui_root: Control
 var C: Dictionary = GameData.COLORS
 var list: VBoxContainer
 var beasts: VBoxContainer
 var beast_head: Label
 var new_btn: Button
 var new_armed := false
+var pages_btn: Button
 
 
 func _ready() -> void:
 	layer = 10
 	visible = false
-	var root := Control.new()
+	ui_root = Control.new()
+	var root := ui_root
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.theme = UiTheme.make()
 	add_child(root)
@@ -56,23 +59,32 @@ func _ready() -> void:
 	new_btn.focus_mode = Control.FOCUS_NONE
 	new_btn.pressed.connect(_on_new_pressed)
 	row.add_child(new_btn)
+	# The Unwritten, Phase 2: before the book, torn pages are kept with the journal.
+	pages_btn = Button.new()
+	pages_btn.text = String(GameData.Lore.LINES.fragments_button)
+	pages_btn.focus_mode = Control.FOCUS_NONE
+	pages_btn.pressed.connect(func():
+		visible = false
+		w.fragments_ui.open(self))
+	row.add_child(pages_btn)
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(sp)
-	var close := Button.new()
-	close.text = "Close the journal"
-	close.theme_type_variation = "PrimaryButton"
-	close.focus_mode = Control.FOCUS_NONE
-	close.pressed.connect(close_journal)
-	row.add_child(close)
+	var close_btn := Button.new()
+	close_btn.text = "Close the journal"
+	close_btn.theme_type_variation = "PrimaryButton"
+	close_btn.focus_mode = Control.FOCUS_NONE
+	close_btn.pressed.connect(close_journal)
+	row.add_child(close_btn)
 	v.add_child(row)
+	UiTheme.fit(self, ui_root)
 
 
-func _label(text: String, size: int, col: Color) -> Label:
+func _label(text: String, font_size: int, col: Color) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", col)
 	return l
 
@@ -89,6 +101,19 @@ func open() -> void:
 	beast_head.visible = not known.is_empty()
 	for l in known:
 		beasts.add_child(_label(l, 14, C.ink))
+	pages_btn.visible = not Game.has_book(w.ch) and not w.ch.get("fragments", []).is_empty()
+	visible = true
+	w.paused = true
+
+
+## Q / E (or a shoulder button) with this open turns to the torn pages.
+func _process(_dt: float) -> void:
+	if visible and pages_btn.visible and (Input.is_action_just_pressed("page_next") or Input.is_action_just_pressed("page_prev")):
+		pages_btn.pressed.emit()
+
+
+## Back from the torn pages.
+func reopen() -> void:
 	visible = true
 	w.paused = true
 

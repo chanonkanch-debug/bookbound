@@ -340,3 +340,268 @@ book feels like the answer to something you watched build. It reads the same sco
 - There's no nudge for the new keys 4 to 6 yet. The journal line and the new mark on the stance bar
   are the only hints.
 - Knights live far out, so Brace will be rare before the ceremony. That's on purpose: it's a reward for exploring.
+
+---
+
+# The Unwritten
+
+The milestone after the slow-RPG work. Eight phases, each stopped for the owner's okay.
+Numbers for each phase are in their own block at the end of `scripts/data/game_data.gd`
+(search for "The Unwritten, Phase").
+
+## The Unwritten, Phase 1: polish what exists
+
+The first hour, minute by minute, and what was fixed in it, is in `docs/FIRST_HOUR.md`.
+
+### New designer tools
+
+| command | what it does |
+|---|---|
+| `-- --firsthour [--persona=careful\|curious\|bold] [--seed=N] [--minutes=N]` | a new-player bot that only uses what it would have found; prints a timeline, a minute-by-minute table and quiet stretches (`scripts/dev/first_hour.gd`) |
+| `-- --balance --only=books\|bare\|chapters\|firsthour [--el=fire] [--runs=N]` | one part of the balance bot |
+| `-- --showcase` | screenshots of every element, wind-up and reading state (needs a screen or `xvfb-run`) |
+| `-- --stress` | the heaviest scene, timed (`scripts/dev/showcase.gd`) |
+
+### Tuning for the first hour (`NUDGES`, `BARE_XP_MULT`, `HAND_REST_MAX`, `CHAPTER_TUNING.hint_gap`, `MONSTERS.hearth_give_up`)
+
+See `FIRST_HOUR.md` for why each one exists. In short: resting is found in the first two
+minutes instead of after 17 to 35; the ceremony moved from 4 to 7 minutes (bot) to 7 to 11;
+hints, growth lines and whispers come one at a time.
+
+`BARE_XP_MULT = 0.6`: before the book, XP from everything is multiplied by this. The
+bare-hands balance bot now takes these times to Lv 5 (4 runs each, seconds):
+
+| style | before | now |
+|---|---|---|
+| brawler | 425 to 809 | 1101 |
+| spreader | 202 to 519 | 524 |
+| controller | 383 to 655 | 646 |
+| skirmisher | 436 to 452 | 777 |
+| anchor | 201 to 690 | 513 |
+| mixed | 414 to 451 | 587 |
+
+("before" is the range between the old version and Phase 1 without the multiplier; four runs
+are noisy.) The spread between the fastest and slowest style went from about 3.4 times to
+about 2.1 times. Brawler is now the slowest; it also dies the most along with skirmisher.
+
+### Readability (`READABILITY`, `scripts/util/element_fx.gd`)
+
+- Every element has its own shape and motion, not only colour: fire licks upward with
+  rising embers, water is round drops and smooth ripples, earth is heavy angular blocks
+  that barely move, wind is spinning crescents and spirals, lightning is zigzags that redraw
+  every frame. Bolts, zones and bursts all follow this.
+- Monster wind-ups: a ring that closes in on the monster as the bite comes.
+- Reading: a faint full ring shows how long the read is; the progress line fills it; a flash
+  when it's ready; a second, breathing ring while overcharging; a broken read is a split ring
+  with a red slash; a fizzle scatters letters.
+- Low ink: the book in your hand goes hollow with a red edge when this page costs more than
+  you have, and the stance rim turns into a red dashed line.
+- Low health: a slow heartbeat darkens the screen edges below `low_hp_pulse`.
+
+### Feel (`FEEL`)
+
+- Hit-pause: the world stops for `hitstop_time` when your hit takes `hitstop_frac` of a
+  monster's health or more, when you take `hitstop_hurt` damage or more, and on the Last Page.
+  On by default, because it's very short.
+- Screen shake: off by default (it fought the quiet mood). When on, it shakes for tier-2
+  kills, for taking `shake_hurt` damage or more, and for the Last Page.
+- Splatters linger: `splat_life` seconds, `kill_splat_life` for kills, at most `splat_max`.
+- Page turn: the page lifts and folds over (`page_turn_lift`).
+- The world rules (`World._update`) never see hit-pause or shake, so tests and bots are
+  unaffected by either setting.
+
+### Controls and the pause menu (`PAUSE`, `KEY_PAGE`, `SETTINGS`, `UI_SCALES`)
+
+- Gamepad: left stick moves, right stick aims, A reads, Y rests, shoulders turn pages,
+  left trigger is the Last Page, D-pad up is the journal, D-pad down the map, Back opens the
+  book, Start pauses. X is kept for talking (Phase 5).
+- Esc or Start closes whatever is open, or opens the pause menu: back to the world,
+  settings, what my hands know (the key page), rest here and leave (saves and quits).
+- The key page is drawn like a page of the book and only lists controls you've found
+  (`KEY_PAGE` rows say when each appears), so it never gives a secret away.
+- Settings, saved in `user://settings.cfg`: hit-pause, shake, UI size (four steps, named in
+  words), and show numbers (off; for testing).
+
+### The sweep
+
+Tested by `--autotest` (85 checks now):
+- Dying while reading cancels the read.
+- Resting twice during the ceremony shows the ceremony once.
+- A chapter waking mid-read cancels the read and gives the ink back.
+- Holding the read key through a page change doesn't cast again.
+- Save and load at every interface unlock stage, with and without a book.
+- The pause menu, key page, settings, UI scale, hit-pause on and off, gamepad bindings.
+- Every GDScript warning was fixed; the warnings check treats them as errors.
+
+Save version stays 4: Phase 1 adds no saved state except new keys inside existing records
+(`nudged.map`, `opened.map`), which load as missing and default to false.
+
+### The voice pass (`JOURNAL`, `LEAN_*`, `BOOK_TEXT`)
+
+Rule: the journal is the character's own hand, first person, past tense, no game words
+(level, XP, mana, damage). Margins are the book speaking, second person or bare
+instruction. The lean lines and the open-book text were rewritten to match, and the open
+book's text moved into `BOOK_TEXT`.
+
+### Book balance after Phase 1
+
+Phase 1 changes no spell, so the book table should match the version before it. It does,
+within the noise of four runs. Region averages (seconds): old 85 / 110 / 160, now
+82 / 113 / 164. Per element, compared with the average of all fifteen books:
+
+| element | Fields | Marsh | Reach |
+|---|---|---|---|
+| fire | +7% | +1% | +13% |
+| water (8 runs) | +2% | +1% | -6% |
+| earth | +6% | +15% | +15% |
+| wind (8 runs) | +7% | -15% | -20% |
+| lightning | -5% | -9% | -7% |
+
+Wind is a little fast later on, and was before Phase 1 too (-15% and -22%). Single books
+swing by up to 30% between runs of four, so the `!` marks in one run aren't meaningful on
+their own. Left as it is; Phase 3 (monster inks) changes the fights anyway, and the table
+will be re-run then.
+
+### Deferred or not quite right yet (The Unwritten, Phase 1)
+
+- **Quiet stretches after minute 20.** Content, not tuning. Phases 2, 3, 5 and 6.
+- **No nudge for keys 4 to 6** (learned moves). Kept as a reward for looking.
+- **Drawing speed on a real graphics card** wasn't measured (the test machine has none).
+  Run `-- --stress` without `--headless` on a real computer.
+- **The first kill writes four lines at once.** They're queued now, so each can be read.
+- **The bots fight better than people**, so their times are the fastest a person would see.
+
+---
+
+## The Unwritten, Phase 2: lore, erasure sites, restoring the world
+
+The story is in `docs/LORE.md` (approved by the owner before building). Numbers and words
+for this phase are in **`scripts/data/lore_data.gd`**, the first split of the data layer. It
+is reached through `game_data.gd` as `GameData.Lore` (for example `GameData.Lore.SITES`), so
+`game_data.gd` is still the single entry point. Split rule from now on: a phase with a lot of
+text gets its own file under `scripts/data/`, preloaded as a const at the top of `game_data.gd`
+and listed in the header comment there.
+
+New code: `world/erasure.gd` (rules for sites, guardians, restoring and re-erasure),
+`world/torn_pages.gd` (pages lying in the world), `util/site_fx.gd` (how sites, the wave,
+pages and the Hearth's windows look), `ui/fragments_overlay.gd` (reading the pages).
+
+### Erasure sites (`SITES`, `ERASURE`)
+
+Eight sites: two in Inkling Fields, three in Blot Marsh, three in Knight's Reach. Each is
+"erased" (bare), "cleared" (guardian beaten, still bare) or "restored".
+
+Near a bare site (full strength inside it, fading to nothing at twice its radius):
+- spells read at 0.85 speed (`read_speed`), casting ink comes back at half speed (`ink_regen`);
+- ground patches within 1.4 radii lose their nature and their look (`terrain_fade`): grass
+  won't burn, puddles don't soak, stones and open ground do nothing;
+- 45% of new monsters appear at a bare site within 800 px instead of around you
+  (`gather_chance`), but only while its guardian sleeps. During the guardian fight nothing
+  else gathers, and once it's beaten the pale stops drawing them.
+
+### Guardians (`GUARDIANS`, `GUARDIAN_WAKE`, `GUARDIAN_LEASH`, `GUARDIAN_INK`)
+
+When you come within 170 px of a bare site's edge, its guardian wakes with 1 to 3 ordinary
+monsters of the region: the Scrawl (an Inkling x10 health), the Spill (a Blot x2.5), the
+Hollow (a Knight x1.5). They're bigger, hit a little harder, are wrapped in a pale halo, and:
+- **have no element affinities** ("made of the pale"), so no book is locked out of a site;
+- don't despawn when you walk away, and won't chase you further than 3 site radii;
+- don't heal, so a fight can be finished in several goes;
+- give 1.5 to 2 times normal XP (first tried at 4 to 6 times: a guardian alone was worth a
+  region's whole XP test, which sped the book table up by a third).
+
+`GUARDIAN_INK` multiplies each element's damage against guardians, for single-target balance:
+lightning 1.5, the rest 1.0. Chain spells waste their jumps on one big target.
+
+### Restoring
+
+Rest at the centre of a cleared site (hold R, within 0.6 radii) to write it back. The site
+gets a campfire (so later rests there are one press), a colour wash for its region, denser
+lines, small flowers and its own detail (a fence, grass, a pool, stepping stones, reeds, a
+red banner, hill contours, a carved line), and around it 70% of new monsters don't appear
+(`calm_skip` within 3 radii). One house in the Hearth lights its window per restored site
+(`HEARTH_WINDOWS`); Phase 5 adds people.
+
+The moment itself (`RESTORE_FX`, `site_fx.gd`): a short hit-pause, then over 4.5 s a gilt
+front spreads from the centre with ink tendrils racing ahead of it and gilt sparks rising;
+the pale drains away behind it and the colour and details are drawn in as the front passes
+them. Two journal lines: "I wrote it back. I didn't know I could do that." the first time, and
+the site's own line.
+
+### Slow re-erasure (`REERASE`)
+
+A restored site starts to fade once its region has gone 20 minutes of play without a visit
+(`grace`), and is bare again 30 minutes after that (`fade_time`). Visiting the region stops
+the fading; resting at the site writes it back in full ("I wrote it back again. It remembered
+faster this time."). The first fade past a quarter writes "The pale is creeping back where I
+haven't been." Fully faded, it loses its fire, its window goes dark and the guardian returns.
+Off with `REERASE.enabled`, or the pause-menu setting "The pale returns to forgotten places"
+(`Game.settings.reerase`, on by default).
+
+### Torn pages (`FRAGMENTS`)
+
+Twelve pages, the texts from LORE.md. Nine are placed now: two in grass (seen within 110 px),
+three behind stones (a stone is always drawn, the page corner shows within 170 px), four at
+sites (they appear once the site is written back). The last three wait for the Stacks
+(Phase 7) and aren't placed anywhere yet. Walk over one to pick it up (30 px). The first one
+writes a journal line; each shows its title briefly where it lay.
+
+They're read as torn paper, one at a time, in the order found, newest first, with a row of
+dots instead of a count. With a book they're at the back of the book (a "Torn pages" button,
+or Q / E / a shoulder button with the book open); before the book they're kept with the
+journal ("I keep them folded with my own page."). The key page lists them once one is found.
+
+### Saves
+
+- **Character save version 5**: `fragments` (ids in the order found). Migration adds an
+  empty list; books, levels, discoveries and chapter progress are untouched.
+- **A new world save**, `user://bookbound_world.json`, version 1 (`Game.world`): each site's
+  state, paleness, times written back and whether its fading was noticed; when each region
+  was last visited; and the world's play time. It's apart from the character so a host can
+  own it later. A missing world file (any older save) starts a fresh world.
+  `Game.migrate_world` adds sites from later versions without touching restored ones.
+- A new character starts a new world.
+
+### F1
+
+New sections: every site's state, paleness, how long its region has been left alone,
+whether its guardian is awake, and how many times it was written back; the erasure strength,
+read speed and ink refill where you stand; every torn page, found or not and where it lies.
+New button: "Write back the nearest site".
+
+### Balance after Phase 2
+
+Guardian fights (`--balance --only=sites`, medium books at Lv 5 / 8 / 11, 10 runs; bare hands
+at Lv 4 in the Fields), seconds from the guardian waking to its fall:
+
+| | Fields | Marsh | Reach |
+|---|---|---|---|
+| fire | 22 | 25 | 76 |
+| water | 27 | 46 | 65 |
+| earth | 41 | 34 | 56 |
+| wind | 22 | 42 | 67 |
+| lightning | 16 | 59 | 59 |
+| average | 26 | 41 | 65 |
+| bare hands (Lv 4) | 38 | | |
+
+Every book (and bare hands) writes back every site in every run. Knight's Reach is within
+±18% for every book. The Fields and Marsh fights are short and noisy, from -39% to +60%: two
+batches of ten runs disagree by about as much, because a medium book gets a random second
+page and a 20-second fight swings on a single wind-up. Not yet a ±20% proof; Phase 3's
+branch balance re-runs it with more runs per cell.
+
+Book table (`--balance --only=books`, 4 runs): region averages are now 61 / 80 / 122 seconds
+(was 82 / 113 / 164 before Phase 2), because bots start in a fresh world each run and the
+guardians and gathered monsters near sites are worth XP. Per element, against the average of
+all fifteen books: fire -22 / +29 / +18, water 0 / +6 / 0, earth +19 / +1 / -2,
+wind -22 / -25 / -17, lightning +25 / -12 / +1. Wind stays a little fast, as before.
+
+### Deferred or not quite right yet (The Unwritten, Phase 2)
+
+- **Bots restore four to eight sites in their first hour.** A person will be slower, but this
+  may still be faster than "slow and meaningful" wants. The first Fields site falls at 1 to 5
+  minutes, before the ceremony. Tunable with the guardians' health.
+- **Guardian fights aren't within ±20% per book yet** (see above).
+- **Site names** aren't shown anywhere yet; the Cartographer (Phase 5) marks them on the map.
+- **The Stacks' three pages** are written but not placed (Phase 7).
+- **Day and night** don't touch sites yet (Phase 6 makes them pulse at night).

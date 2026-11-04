@@ -9,8 +9,15 @@ extends Node
 ## Part 3 (`--chapters`): how fast each hidden-chapter trigger progresses, to check the
 ##   chapters still unlock in about the same play time.
 ##
+## Part 4 (`--only=firsthour`): the new-player bot (scripts/dev/first_hour.gd), a timeline of
+##   what a newcomer sees in their first hour. docs/FIRST_HOUR.md is written from it.
+##
+## Part 5 (`--only=sites`, The Unwritten, Phase 2): every element (and bare hands in the
+##   Fields) walks up to an erasure site, beats its guardian and escorts, and writes it back.
+##   Prints how long that takes and how often the bot falls. Every book should be within ±20%.
+##
 ## Options: `--runs=N` runs per case (default 3), `--signals` shows raw playstyle signals,
-## `--only=books` / `--only=bare` / `--only=chapters` runs one part.
+## `--only=books` / `--only=bare` / `--only=sites` / `--only=chapters` / `--only=firsthour` runs one part.
 
 const World := preload("res://scripts/world/world.gd")
 const DT := 1.0 / 30.0
@@ -61,8 +68,16 @@ func run() -> void:
 		await _bare_part(runs)
 	if only == "" or only == "books":
 		await _book_part(runs)
+	if only == "" or only == "sites":
+		await _site_part(runs)
 	if only == "chapters" or "--chapters" in OS.get_cmdline_user_args():
 		await _chapter_part()
+	if only == "firsthour":
+		# Part 4 (The Unwritten, Phase 1): the new-player bot, same as `-- --firsthour`.
+		var fh = load("res://scripts/dev/first_hour.gd").new()
+		add_child(fh)
+		await fh.run_first_hour()
+		fh.queue_free()
 	print("\n=== done ===")
 
 
@@ -367,35 +382,14 @@ func _book_part(runs: int) -> void:
 		var s := 0.0
 		for x in fl:
 			s += x / fl.size()
-		print("Fight length in %s: median %ds, average %ds (%d fights)" % [REGION_TESTS[ri].name, roundi(fl[fl.size() / 2]), roundi(s), fl.size()])
+		print("Fight length in %s: median %ds, average %ds (%d fights)" % [REGION_TESTS[ri].name, roundi(fl[int(fl.size() / 2.0)]), roundi(s), fl.size()])
 
 
 ## One run: a character with this book at the region's level, fighting there
 ## until they earn the region's XP target.
 func _play_book(el: String, th: String, ri: int) -> Dictionary:
 	var rt: Dictionary = REGION_TESTS[ri]
-	var c := Game.new_character("Bot", "orphan")
-	c.el = el
-	c.thick = th
-	c.level = rt.level
-	var n: int = GameData.THICKNESS[th].slots
-	var idx: Array = [0] if n == 1 else ([0, 1, 2] if n == 3 else [0, [1, 2].pick_random()])
-	c.spells = []
-	for i in idx:
-		c.spells.append({"i": i, "lvl": 1})
-	c.aspect = {"id": "stillness", "progress": 0, "stage": 0, "awakened": false, "margins": [], "need": 99999, "streak": 99}
-	# Spend all the writing ink a player would have by now, evenly.
-	var ink: int = GameData.INK_PER_LEVEL * (int(rt.level) - 1)
-	var mx: int = GameData.THICKNESS[th].max_level
-	while ink > 0:
-		var low = null
-		for s in c.spells:
-			if s.lvl < mx and (low == null or s.lvl < low.lvl):
-				low = s
-		if low == null:
-			break
-		low.lvl += 1
-		ink -= 1
+	var c := _book_bot(el, th, int(rt.level))
 	Game.ch = c
 	var w = await _new_world()
 	home = Vector2.from_angle(randf() * TAU) * float(rt.radius)
@@ -436,6 +430,33 @@ func _play_book(el: String, th: String, ri: int) -> Dictionary:
 	await get_tree().process_frame
 	Game.delete_save()
 	return res
+
+
+## A character with this book at this level, with all the writing ink spent evenly.
+func _book_bot(el: String, th: String, level: int) -> Dictionary:
+	var c := Game.new_character("Bot", "orphan")
+	c.el = el
+	c.thick = th
+	c.level = level
+	var n: int = GameData.THICKNESS[th].slots
+	var idx: Array = [0] if n == 1 else ([0, 1, 2] if n == 3 else [0, [1, 2].pick_random()])
+	c.spells = []
+	for i in idx:
+		c.spells.append({"i": i, "lvl": 1})
+	c.aspect = {"id": "stillness", "progress": 0, "stage": 0, "awakened": false, "margins": [], "need": 99999, "streak": 99}
+	# Spend all the writing ink a player would have by now, evenly.
+	var ink: int = GameData.INK_PER_LEVEL * (level - 1)
+	var mx: int = GameData.THICKNESS[th].max_level
+	while ink > 0:
+		var low = null
+		for s in c.spells:
+			if s.lvl < mx and (low == null or s.lvl < low.lvl):
+				low = s
+		if low == null:
+			break
+		low.lvl += 1
+		ink -= 1
+	return c
 
 
 ## XP including levels already gained, so leveling up mid-run doesn't reset the count.
@@ -653,3 +674,153 @@ func _play_rates(el: String, th: String) -> Dictionary:
 	return {"casts": snappedf(cs.casts / m, 0.1), "still_casts": snappedf(still_casts / m, 0.1),
 		"kills": snappedf(kills / m, 0.1), "streak_kills": snappedf(streak_kills / m, 0.1),
 		"echo_kills": snappedf(echo_kills / m, 0.1), "recovers": snappedf(recovers / m, 0.01)}
+
+
+# ================================================================ Part 5: erasure sites
+
+## The level a player would usually be at when reaching each region's sites.
+const SITE_TESTS := {1: 5, 2: 8, 3: 11}
+
+
+func _site_part(runs: int) -> void:
+	print("\n=== Erasure sites: seconds to beat the guardian and write the site back (%d runs each, medium books) ===" % runs)
+	print("fight = from the guardian waking to its fall; all = until the site is written back.")
+	print("! marks a book whose fight is more than 20%% off the region average. Bare hands fight the Fields at Lv 4.\n")
+	var rows := {}
+	var who: Array = []
+	for el in Game.ELS:
+		if only_el == "" or el == only_el:
+			who.append(el)
+	if only_el == "" or only_el == "bare":
+		who.append("bare")
+	for el in who:
+		rows[el] = {}
+		for reg in SITE_TESTS:
+			if el == "bare" and reg != 1:
+				continue
+			var tsum := 0.0
+			var fsum := 0.0
+			var dsum := 0.0
+			var wins := 0
+			for r in runs:
+				var res: Dictionary = await _play_site(el, reg)
+				fsum += (float(res.cleared) - float(res.woke) if res.cleared >= 0.0 else 900.0) / runs
+				if "--verbose" in OS.get_cmdline_user_args():
+					print("  %s in %s: %ds, deaths %d, %s, guardian woke at %ds, fell at %ds" % [el, GameData.REGIONS[reg].name, roundi(res.time), res.deaths, "written back" if res.done else "not done", roundi(res.woke), roundi(res.cleared)])
+				tsum += res.time / runs
+				dsum += float(res.deaths) / runs
+				wins += 1 if res.done else 0
+			rows[el][reg] = {"time": tsum, "fight": fsum, "deaths": dsum, "wins": wins}
+	var means := {}
+	for reg in SITE_TESTS:
+		var m := 0.0
+		var n := 0
+		for el in rows:
+			if el != "bare" and rows[el].has(reg):
+				m += rows[el][reg].fight
+				n += 1
+		means[reg] = m / maxf(1.0, n)
+	var head := "%-11s" % "book"
+	for reg in SITE_TESTS:
+		head += "| %-36s" % ("%s (Lv %d)" % [GameData.REGIONS[reg].name, SITE_TESTS[reg]])
+	print(head)
+	var worst := 0.0
+	for el in rows:
+		var line := "%-11s" % el
+		for reg in SITE_TESTS:
+			if not rows[el].has(reg):
+				line += "| %-36s" % ""
+				continue
+			var c: Dictionary = rows[el][reg]
+			var rel: float = c.fight / maxf(1.0, float(means[reg])) - 1.0
+			var books_here: int = rows.keys().filter(func(k): return k != "bare" and rows[k].has(reg)).size()
+			if el != "bare":
+				worst = maxf(worst, absf(rel))
+			var rel_s: String = ("%+4d%%" % roundi(rel * 100.0)) if books_here > 1 else "     "   # one book alone (--el=) has nothing to compare with
+			line += "| fight %3ds %s%s all %4ds done %d/%d " % [roundi(c.fight), rel_s, "!" if absf(rel) > 0.2 and el != "bare" and books_here > 1 else " ", roundi(c.time), c.wins, runs]
+		print(line)
+	var avg := "%-11s" % "average"
+	for reg in SITE_TESTS:
+		avg += "| fight %3ds                          " % roundi(float(means[reg]))
+	print(avg)
+	print("\nWidest fight-length gap from the region average (books): %d%% (goal: within 20%%)" % roundi(worst * 100.0))
+
+
+## One run: walk to the region's first site, wake its guardian, beat it, rest at the centre.
+func _play_site(el: String, reg: int) -> Dictionary:
+	var site: Dictionary = {}
+	for s in GameData.Lore.SITES:
+		if int(s.region) == reg:
+			site = s
+			break
+	if el == "bare":
+		var c := Game.new_character("Bot", "orphan")
+		c.level = 4
+		Game.ch = c
+	else:
+		Game.ch = _book_bot(el, "medium", int(SITE_TESTS[reg]))
+	var w = await _new_world()
+	for e in w.enemies:
+		e.queue_free()
+	w.enemies.clear()
+	home = site.p
+	var start: Vector2 = site.p + (Vector2.ZERO - site.p).normalized() * (float(site.r) + 380.0)
+	w.player.position = start
+	retreating = false
+	focus_target = null
+	last_target = null
+	var t := 0.0
+	var deaths := 0
+	var was_dead := false
+	var done := false
+	var er = w.erasure
+	var woke := -1.0
+	var cleared := -1.0
+	while t < 900.0:
+		want = -1
+		want_aim = null
+		want_charge = 0.0
+		w.rest_held = false
+		var st: String = String(er.state(site.id).state)
+		if woke < 0.0 and er.guardian_alive(site.id):
+			woke = t
+		if cleared < 0.0 and st != "erased":
+			cleared = t
+		if st == "restored":
+			done = true
+			break
+		if st == "cleared" and w.nearest(w.player.position, 400.0) == null:
+			# Walk to the centre and hold R there.
+			var to_c: Vector2 = site.p - w.player.position
+			if to_c.length() > 12.0 and not w.resting:
+				w.player.steer = to_c.normalized()
+			else:
+				w.player.steer = Vector2.ZERO
+				w.rest_held = true
+		elif st == "erased" and not er.guardian_alive(site.id) and not retreating and w.player.dead_t <= 0.0:
+			w.player.steer = (site.p - w.player.position).normalized()   # head for the site
+		elif st == "erased" and not retreating and w.player.dead_t <= 0.0 and w.nearest(w.player.position, 160.0) == null \
+				and er.guardians[site.id].position.distance_to(w.player.position) > 320.0:
+			# A player after the site goes back for its guardian rather than chasing strays.
+			w.player.steer = (er.guardians[site.id].position - w.player.position).normalized()
+		elif el == "bare":
+			_think_bare(w, "mixed")
+		else:
+			_think_book(w)
+		_apply(w)
+		w._update(DT)
+		t += DT
+		if "--trace" in OS.get_cmdline_user_args() and fmod(t, 20.0) < DT:
+			var g = er.guardians.get(site.id)
+			var gs := "none"
+			if g != null and is_instance_valid(g):
+				gs = "hp %d/%d at %d from you, %d from site, aggro %s, state %s" % [g.hp, g.max_hp, g.position.distance_to(w.player.position), g.position.distance_to(site.p), g.aggro, g.state]
+			print("    t %ds: you %s hp %d ink %d retreat %s resting %s · guardian %s · monsters %d" % [t, w.player.position.round(), w.player.hp, w.player.mana, retreating, w.resting, gs, w.enemies.size()])
+		var dead: bool = w.player.dead_t > 0.0
+		if dead and not was_dead:
+			deaths += 1
+		was_dead = dead
+	w.queue_free()
+	await get_tree().process_frame
+	Game.delete_save()
+	return {"time": t, "deaths": deaths, "done": done, "woke": woke, "cleared": cleared}

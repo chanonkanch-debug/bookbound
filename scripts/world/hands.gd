@@ -77,15 +77,16 @@ func on_rest() -> Array:
 	var out: Array = []
 	if not active():
 		return out
+	var room := int(GameData.HAND_REST_MAX)
 	for foe in GameData.HAND_LESSONS:
 		var L: Dictionary = GameData.HAND_LESSONS[foe]
-		if not knows(L.move) and int(h().lessons.get(foe, 0)) >= int(L.need):
+		if out.size() < room and not knows(L.move) and int(h().lessons.get(foe, 0)) >= int(L.need):
 			h().learned.append(L.move)
 			out.append(["learned_" + String(L.move), String(L.line)])
 	for move in GameData.HAND_GROWTH:
 		var G: Dictionary = GameData.HAND_GROWTH[move]
 		var t := tier(move)
-		while t < G.at.size() and int(h().uses.get(move, 0)) >= int(G.at[t]):
+		while out.size() < room and t < G.at.size() and int(h().uses.get(move, 0)) >= int(G.at[t]):
 			out.append(["grew_%s_%d" % [move, t + 1], String(G.lines[t])])
 			t += 1
 		h().tier[move] = t

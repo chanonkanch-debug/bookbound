@@ -4,10 +4,15 @@ extends Node
 ## (and later can be sent over the network as-is).
 
 const SAVE_PATH := "user://bookbound_save.json"
+const WORLD_PATH := "user://bookbound_world.json"   # The Unwritten, Phase 2: the world's own save
 
 const SETTINGS_PATH := "user://settings.cfg"
 
 var ch: Dictionary = {}
+## The world's state, kept apart from the character so a host can own it later (co-op):
+## which erasure sites are restored, how pale each one is, when each region was last visited.
+## Rules: scripts/world/erasure.gd.
+var world: Dictionary = {}
 var settings: Dictionary = GameData.SETTINGS.duplicate()
 
 
@@ -44,15 +49,21 @@ func show_numbers() -> bool:
 ## your version wins and this is skipped.
 func _setup_input() -> void:
 	var map := {
-		"move_up": [_key(KEY_W), _key(KEY_UP)], "move_down": [_key(KEY_S), _key(KEY_DOWN)],
-		"move_left": [_key(KEY_A), _key(KEY_LEFT)], "move_right": [_key(KEY_D), _key(KEY_RIGHT)],
+		"move_up": [_key(KEY_W), _key(KEY_UP), _axis(JOY_AXIS_LEFT_Y, -1.0)], "move_down": [_key(KEY_S), _key(KEY_DOWN), _axis(JOY_AXIS_LEFT_Y, 1.0)],
+		"move_left": [_key(KEY_A), _key(KEY_LEFT), _axis(JOY_AXIS_LEFT_X, -1.0)], "move_right": [_key(KEY_D), _key(KEY_RIGHT), _axis(JOY_AXIS_LEFT_X, 1.0)],
+		# Gamepad aiming with the right stick (the mouse aims on a computer).
+		"aim_up": [_axis(JOY_AXIS_RIGHT_Y, -1.0)], "aim_down": [_axis(JOY_AXIS_RIGHT_Y, 1.0)],
+		"aim_left": [_axis(JOY_AXIS_RIGHT_X, -1.0)], "aim_right": [_axis(JOY_AXIS_RIGHT_X, 1.0)],
+		"last_page_pad": [_axis(JOY_AXIS_TRIGGER_LEFT, 1.0)],
 		"page_1": [_key(KEY_1)], "page_2": [_key(KEY_2)], "page_3": [_key(KEY_3)], "cast_4": [_key(KEY_4)],
 		"page_5": [_key(KEY_5)], "page_6": [_key(KEY_6)],
 		"page_prev": [_key(KEY_Q), _mouse(MOUSE_BUTTON_WHEEL_UP), _pad(JOY_BUTTON_LEFT_SHOULDER)],
 		"page_next": [_key(KEY_E), _mouse(MOUSE_BUTTON_WHEEL_DOWN), _pad(JOY_BUTTON_RIGHT_SHOULDER)],
 		"read": [_key(KEY_SPACE), _mouse(MOUSE_BUTTON_RIGHT), _pad(JOY_BUTTON_A)],
-		"rest": [_key(KEY_R), _pad(JOY_BUTTON_Y)], "journal": [_key(KEY_J)], "map": [_key(KEY_M)],
-		"open_book": [_key(KEY_B)], "designer_view": [_key(KEY_F1)],
+		"rest": [_key(KEY_R), _pad(JOY_BUTTON_Y)],
+		"journal": [_key(KEY_J), _pad(JOY_BUTTON_DPAD_UP)], "map": [_key(KEY_M), _pad(JOY_BUTTON_DPAD_DOWN)],
+		"open_book": [_key(KEY_B), _pad(JOY_BUTTON_BACK)], "designer_view": [_key(KEY_F1)],
+		"pause": [_key(KEY_ESCAPE), _pad(JOY_BUTTON_START)],
 	}
 	for action in map:
 		if InputMap.has_action(action):
@@ -74,6 +85,13 @@ func _mouse(b: MouseButton) -> InputEvent:
 	return ev
 
 
+func _axis(a: JoyAxis, dir: float) -> InputEvent:
+	var ev := InputEventJoypadMotion.new()
+	ev.axis = a
+	ev.axis_value = dir
+	return ev
+
+
 func _pad(b: JoyButton) -> InputEvent:
 	var ev := InputEventJoypadButton.new()
 	ev.button_index = b
@@ -88,17 +106,20 @@ const ELS := ["fire", "water", "earth", "wind", "lightning"]
 ## A fresh character with bare hands and no book yet.
 ## "signals" counts playstyle signals, "use" counts fighting time per move, and
 ## "temper" is the hidden temperament (see LEAN in game_data.gd).
+## A new character also starts a new world (every site erased, nothing found).
 func new_character(char_name: String, bg: String) -> Dictionary:
+	world = new_world()
 	var temper := {}
-	var tr: Array = GameData.LEAN.temperament
+	var t_range: Array = GameData.LEAN.temperament
 	for k in ELS:
-		temper[k] = randf_range(tr[0], tr[1])
+		temper[k] = randf_range(t_range[0], t_range[1])
 	return {
 		"name": char_name if char_name != "" else "Arin", "bg": bg,
 		"el": "", "thick": "", "pages": 0, "spells": [],
 		"ink": 0, "level": 1, "xp": 0,
 		"aspect": {"id": "", "progress": 0, "stage": 0, "awakened": false, "margins": [], "need": 0, "streak": 0},
 		"signals": {}, "use": {}, "temper": temper,
+		"fragments": [],           # torn pages found, in the order found (save version 5)
 	}.merged(_phase2_fields())
 
 
@@ -361,6 +382,43 @@ func save_game() -> void:
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(ch, "\t"))
+	if not world.is_empty():
+		var wf := FileAccess.open(WORLD_PATH, FileAccess.WRITE)
+		if wf:
+			wf.store_string(JSON.stringify(world, "\t"))
+
+
+## A fresh world: every erasure site erased.
+func new_world() -> Dictionary:
+	return migrate_world({})
+
+
+## Brings a saved world up to date (or fills in an empty one). Sites added in later
+## versions start erased; restored ones stay restored.
+func migrate_world(d: Dictionary) -> Dictionary:
+	if not d.has("sites"):
+		d.sites = {}
+	for s in GameData.Lore.SITES:
+		if not d.sites.has(s.id):
+			d.sites[s.id] = {"state": "erased", "pale": 1.0, "times": 0, "warned": false}
+		var site: Dictionary = d.sites[s.id]
+		site.pale = float(site.get("pale", 1.0))
+		site.times = int(site.get("times", 0))
+		if not site.has("warned"):
+			site.warned = false
+	if not d.has("seen"):
+		d.seen = {}            # region index (as text) -> play time it was last visited
+	d.time = float(d.get("time", 0.0))   # seconds of play in this world
+	d.save_version = GameData.WORLD_SAVE_VERSION
+	return d
+
+
+func load_world() -> Dictionary:
+	if not FileAccess.file_exists(WORLD_PATH):
+		return new_world()
+	var f := FileAccess.open(WORLD_PATH, FileAccess.READ)
+	var d = JSON.parse_string(f.get_as_text()) if f else null
+	return migrate_world(d if typeof(d) == TYPE_DICTIONARY else {})
 
 
 func load_game() -> Dictionary:
@@ -369,7 +427,10 @@ func load_game() -> Dictionary:
 	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
 	if f == null:
 		return {}
-	return parse_save(f.get_as_text())
+	var d := parse_save(f.get_as_text())
+	if not d.is_empty():
+		world = load_world()
+	return d
 
 
 ## Turns saved text back into a character, migrating older saves. {} if it isn't one.
@@ -421,9 +482,16 @@ func migrate(d: Dictionary) -> Dictionary:
 		if not d.has("hands"):
 			d.hands = _hands_fields()
 		d.save_version = 4
+	if v < 5:
+		# The Unwritten, Phase 2: torn pages. An older save has found none, and its world
+		# starts fresh (load_world makes one if there is no world file).
+		if not d.has("fragments"):
+			d.fragments = []
+		d.save_version = 5
 	return d
 
 
 func delete_save() -> void:
-	if FileAccess.file_exists(SAVE_PATH):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
+	for path in [SAVE_PATH, WORLD_PATH]:
+		if FileAccess.file_exists(path):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
