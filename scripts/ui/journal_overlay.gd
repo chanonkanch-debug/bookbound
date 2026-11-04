@@ -13,6 +13,7 @@ var beasts: VBoxContainer
 var beast_head: Label
 var new_btn: Button
 var new_armed := false
+var pages_btn: Button
 
 
 func _ready() -> void:
@@ -58,6 +59,14 @@ func _ready() -> void:
 	new_btn.focus_mode = Control.FOCUS_NONE
 	new_btn.pressed.connect(_on_new_pressed)
 	row.add_child(new_btn)
+	# The Unwritten, Phase 2: before the book, torn pages are kept with the journal.
+	pages_btn = Button.new()
+	pages_btn.text = String(GameData.Lore.LINES.fragments_button)
+	pages_btn.focus_mode = Control.FOCUS_NONE
+	pages_btn.pressed.connect(func():
+		visible = false
+		w.fragments_ui.open(self))
+	row.add_child(pages_btn)
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(sp)
@@ -92,6 +101,19 @@ func open() -> void:
 	beast_head.visible = not known.is_empty()
 	for l in known:
 		beasts.add_child(_label(l, 14, C.ink))
+	pages_btn.visible = not Game.has_book(w.ch) and not w.ch.get("fragments", []).is_empty()
+	visible = true
+	w.paused = true
+
+
+## Q / E (or a shoulder button) with this open turns to the torn pages.
+func _process(_dt: float) -> void:
+	if visible and pages_btn.visible and (Input.is_action_just_pressed("page_next") or Input.is_action_just_pressed("page_prev")):
+		pages_btn.pressed.emit()
+
+
+## Back from the torn pages.
+func reopen() -> void:
 	visible = true
 	w.paused = true
 

@@ -45,6 +45,7 @@ func _ready() -> void:
 	buttons.add_child(_button("Complete the trigger", func(): w.dev_complete_trigger()))
 	buttons.add_child(_button("Gain a level (rest to write it)", func(): w.ch.xp += Game.xp_next(Game.pending_level(w.ch)) - Game.xp_into_level(w.ch)))
 	buttons.add_child(_button("Rest now", func(): w.finish_rest()))
+	buttons.add_child(_button("Write back the nearest site", func(): w.dev_restore_nearest()))
 	buttons.add_child(_button("Unlock all UI", func(): w.unlock_all_ui()))
 	numbers_btn = _button("", _toggle_numbers)
 	buttons.add_child(numbers_btn)
@@ -126,6 +127,9 @@ func _refresh() -> void:
 		s += w.discovery.designer_text()
 	if w.get("hands") != null:
 		s += w.hands.designer_text()
+	if w.get("erasure") != null:
+		s += w.erasure.designer_text()
+		s += w.pages.designer_text()
 	s += _sec("Journal (%d lines)" % ch.get("journal", []).size())
 	for l in ch.get("journal", []):
 		s += "[color=#%s]· %s[/color]\n" % [soft, l]

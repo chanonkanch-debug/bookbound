@@ -50,6 +50,10 @@ var crash_dmg := 0.0
 var crash_kind := ""         # "undertow" (spell secret) or "tangle" (hand secret)
 var split_done := false
 var bored := 0.0             # seconds spent hunting someone who is safe inside the Hearth
+var guardian := ""           # The Unwritten, Phase 2: the erasure site this guardian keeps (see erasure.gd)
+var title := ""              # a guardian's name (designer view only)
+var home_p = null            # a guardian stays near its site: it won't chase you further than `leash`
+var leash := 0.0
 
 
 func setup(world, t: int, pos: Vector2) -> void:
@@ -114,6 +118,8 @@ func tick(dt: float) -> void:
 		aggro = false
 		if state != "hunt" and state != "recover":
 			state = "hunt"
+	if home_p != null and position.distance_to(home_p) > leash and p.position.distance_to(home_p) > leash:
+		aggro = false   # a guardian won't follow you far from its site
 	var s := spd * (slow_f if slow_t > 0.0 else 1.0) * (enrage_speed if enraged_t > 0.0 else 1.0)
 	var v := Vector2.ZERO
 	var dir: Vector2 = to_p / d if d > 0.0 else Vector2.RIGHT
@@ -123,6 +129,8 @@ func tick(dt: float) -> void:
 		"hunt":
 			if not aggro:
 				wander += randf_range(-1.5, 1.5) * dt
+				if home_p != null and position.distance_to(home_p) > 30.0:
+					wander = (home_p - position).angle()   # back to its site
 				v = Vector2.from_angle(wander) * s * 0.35
 				face = face.slerp(v.normalized(), minf(1.0, dt * 2.0)) if v.length() > 0.1 else face
 			else:
@@ -244,6 +252,11 @@ func _draw() -> void:
 		body = C.danger
 	if state == "stagger":
 		body = C.ink.lerp(C.paper, 0.35)
+	# A guardian is wrapped in the pale it came from: a bare, breathing halo.
+	if guardian != "":
+		var hk := 0.5 + 0.5 * sin(w.time * 1.7 + sd)
+		draw_circle(Vector2.ZERO, r * (1.55 + 0.1 * hk), Color(C.paper.lightened(0.5), 0.55))
+		Ink.dashed_circle(self, Vector2.ZERO, r * (1.6 + 0.1 * hk), Color(C.ink_soft, 0.45), 1.2, w.time * 0.4)
 	# Telegraph shapes, drawn under the body.
 	if state == "windup":
 		match behavior:

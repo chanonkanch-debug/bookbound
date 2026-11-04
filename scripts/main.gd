@@ -190,7 +190,7 @@ func _autotest() -> void:
 	for e in w.enemies:
 		e.queue_free()
 	w.enemies.clear()
-	w.player.position = Vector2(300, 300)
+	w.player.position = Vector2(0, 300)
 	w.player.hp = Game.max_hp() * 0.5
 	w.rest_held = true
 	w.player.steer = Vector2.ZERO
@@ -353,7 +353,11 @@ func _autotest() -> void:
 	print("Discoveries (Phase 3):")
 	await _test_discoveries(w)
 	print("Polish (The Unwritten, Phase 1):")
+	var keep_world: Dictionary = Game.world
 	await _test_polish(w)
+	print("The Unwritten (Phase 2):")
+	await _test_unwritten(w)
+	Game.world = keep_world
 	print("Saves (Phase 2):")
 	_test_migration()
 	print("Autotest finished with %d failure(s). Level %d, enemies alive %d" % [failures, w.ch.level, w.enemies.size()])
@@ -762,6 +766,181 @@ func _test_polish(main_w) -> void:
 
 	Game.settings = keep_settings
 	Game.set_setting("shake", keep_settings.shake)
+	Game.ch = keep
+	main_w.visible = true
+	main_w.hud.visible = true
+	await get_tree().process_frame
+
+
+# ================================================================ The Unwritten, Phase 2
+
+func _test_unwritten(main_w) -> void:
+	var keep: Dictionary = Game.ch
+	var keep_settings: Dictionary = Game.settings.duplicate()
+	main_w.set_process(false)
+	main_w.visible = false
+	main_w.hud.visible = false
+	var L = GameData.Lore
+	Game.ch = _book_char("fire", "stillness")
+	var w = await _side_world()
+	var er = w.erasure
+	var all_bare := true
+	for s in L.SITES:
+		all_bare = all_bare and String(er.state(s.id).state) == "erased" and er.paleness(s.id) == 1.0
+	_check(all_bare and L.SITES.size() >= 6, "a new world starts with every erasure site bare (%d sites)" % L.SITES.size())
+	var per_region := {1: 0, 2: 0, 3: 0}
+	for s in L.SITES:
+		per_region[int(s.region)] += 1
+	_check(per_region.values().all(func(n): return n >= 2 and n <= 3), "each region has two or three sites")
+
+	# -- Near a bare site
+	var st0: Dictionary = L.SITES[0]
+	_check(er.strength(st0.p) > 0.99 and er.read_speed(st0.p) < 1.0 and er.ink_regen(st0.p) < 1.0 and er.read_speed(Vector2(0, 0)) == 1.0,
+		"near a bare site spells read slower and ink comes back slower, and nowhere else")
+	w.terrain.patches.append({"kind": "grass", "p": st0.p + Vector2(10, 0), "r": 40.0, "burnt": 0.0, "sd": 0.0, "faded": false})
+	er._fade_patches()
+	_check(w.terrain.at(st0.p + Vector2(10, 0), "grass") == null, "ground near a bare site has faded: grass there won't burn")
+	var gathered := 0
+	for k in 200:
+		var gp = er.gather_point(st0.p + Vector2(300, 0))
+		if gp != null and gp.distance_to(st0.p) < float(st0.r) * 1.2:
+			gathered += 1
+	_check(gathered > 15 and gathered < 160, "monsters gather at a bare site close by (%d of 200 new ones)" % gathered)
+
+	# -- The guardian
+	w.player.position = st0.p + Vector2(float(st0.r) + 120.0, 0)
+	w._update(DT)
+	var g = er.guardians.get(st0.id)
+	_check(er.guardian_alive(st0.id) and g.hp > float(GameData.FOES[int(L.GUARDIANS[1].tier)].hp) * 2.0 and w.enemies.size() >= 2,
+		"coming close wakes the site's guardian and its escorts")
+	var during := 0
+	for k in 100:
+		var gp2 = er.gather_point(st0.p + Vector2(300, 0))
+		if gp2 != null and gp2.distance_to(st0.p) < float(st0.r) * 1.2:
+			during += 1
+	_check(during == 0, "while its guardian is awake, no more monsters gather at that site")
+	_check(is_equal_approx(w._affinity(g, "fire", "player"), 1.0) and is_equal_approx(w._affinity(g, "water", "player"), 1.0), "guardians are made of the pale: no element moves them more than another")
+	g.position = st0.p + Vector2(float(st0.r) * float(L.GUARDIAN_LEASH) + 40.0, 0)
+	w.player.position = st0.p + Vector2(float(st0.r) * float(L.GUARDIAN_LEASH) + 400.0, 0)
+	g.tick(DT)
+	_check(not g.aggro, "a guardian won't chase you far from its site")
+	w.player.position = st0.p
+	_check(not w.can_rest(), "you can't rest at a site while its guardian is awake")
+	w.kill(g, "player")
+	_check(String(er.state(st0.id).state) == "cleared" and Game.ch.journal_ids.has("guardian_first"), "beating the guardian clears the site, and the journal notices")
+	_clear(w)
+	w._update(DT)
+	_check(not er.guardian_alive(st0.id) and w.enemies.size() == 0, "a cleared site doesn't wake another guardian")
+
+	# -- Writing it back
+	w.auto_rest_ui = true
+	w.player.steer = Vector2.ZERO
+	w.player.position = st0.p
+	w.rest_held = true
+	for f in roundi((float(GameData.REST.time) + 0.5) / DT):
+		w._update(DT)
+	w.rest_held = false
+	_check(er.is_restored(st0.id) and er.paleness(st0.id) == 0.0, "resting at the centre of a cleared site writes it back")
+	_check(Game.ch.journal_ids.has("restore_first") and Game.ch.journal_ids.has("site_" + st0.id), "the journal remembers writing it back")
+	_check(st0.p in er.campfires() and er.fx.has(st0.id), "a campfire appears there, and the ink spreads back over it")
+	var calm := 0
+	for k in 400:
+		if er.calm(st0.p + Vector2(20, 0)):
+			calm += 1
+	_check(calm > 200, "fewer monsters appear around a restored site (%d of 400 kept away)" % calm)
+	er._fade_patches()
+	_check(w.terrain.at(st0.p + Vector2(10, 0), "grass") != null, "the ground there reacts again once it is written back")
+	_check(er.read_speed(st0.p) == 1.0, "spells read normally at a restored site")
+	w.designer._refresh()
+	var dtxt: String = w.designer.text.text
+	_check(dtxt.contains("Erasure sites") and dtxt.contains("Torn pages") and dtxt.contains("restored"), "F1 shows the sites, their state and the torn pages")
+
+	# -- Torn pages
+	var pg = w.pages
+	var ledger: Dictionary = pg.by_id("ledger")
+	_check(String(ledger.site) == st0.id and pg.where(ledger) != null, "a torn page appears at the site once it is written back")
+	_check(pg.where(pg.by_id("spilled_ink")) == null, "pages at sites still bare aren't there yet")
+	w.player.position = pg.where(ledger)
+	w._update(DT)
+	_check(Game.ch.fragments == ["ledger"] and Game.ch.journal_ids.has("fragment_first"), "walking over a torn page picks it up, and the first one writes a journal line")
+	var hymn: Dictionary = pg.by_id("hymn")
+	w.player.position = hymn.p
+	w._update(DT)
+	_check(Game.ch.fragments == ["ledger", "hymn"], "pages are kept in the order found, not in story order")
+	var stacks := 0
+	var placed_in_stacks := 0
+	for f in L.FRAGMENTS:
+		if String(f.where) == "stacks":
+			stacks += 1
+			if pg.where(f) != null:
+				placed_in_stacks += 1
+	_check(L.FRAGMENTS.size() == 12 and stacks == 3 and placed_in_stacks == 0, "twelve torn pages; the last three wait in the Stacks and aren't lying anywhere yet")
+	_check("Torn pages I found" in w.pause_ui.key_lines(Game.ch).map(func(l): return l[0]), "the key page lists the torn pages once one is found")
+	w.open_book()
+	_check(w.book.visible and w.book.pages_btn.visible, "the book has its torn pages at the back")
+	w.book.pages_btn.pressed.emit()
+	_check(w.fragments_ui.visible and not w.book.visible, "turning to them shows the torn pages")
+	w.close_overlays()
+	_check(w.book.visible and not w.fragments_ui.visible, "putting them away goes back to the book")
+	w.close_overlays()
+	w.fragments_ui.open(null)
+	_check(w.fragments_ui.visible and w.fragments_ui.sheet.title == String(hymn.title), "the torn pages open on the newest one")
+	w.fragments_ui.turn(-1)
+	_check(w.fragments_ui.sheet.title == String(ledger.title), "and turn back to the older ones")
+	_check(not w.fragments_ui.sheet.body.is_valid_int() and not w.fragments_ui.counter.text.contains("1"), "no numbers on the torn pages")
+	w.close_overlays()
+	_check(not w.fragments_ui.visible and not w.paused, "Esc puts the torn pages away")
+
+	# -- Slow re-erasure
+	var ws: Dictionary = Game.world
+	var R: Dictionary = L.REERASE
+	w.region = 2
+	ws.seen["1"] = float(ws.time) - float(R.grace) * 0.5
+	er.tick(1.0)
+	_check(er.paleness(st0.id) == 0.0, "a restored site doesn't fade while its region was visited recently")
+	ws.seen["1"] = float(ws.time) - float(R.grace) - 1.0
+	for k in 20:
+		er.tick(float(R.fade_time) * float(R.warn_at) / 10.0)
+	_check(er.paleness(st0.id) > float(R.warn_at) and Game.ch.journal_ids.has("reerase_first") and er.is_restored(st0.id),
+		"left alone long enough, a restored site starts to fade, and the journal notices")
+	w.region = 1
+	var p1: float = er.paleness(st0.id)
+	er.tick(60.0)
+	_check(is_equal_approx(er.paleness(st0.id), p1), "visiting the region stops the fading")
+	w.region = 2
+	Game.settings.reerase = false
+	ws.seen["1"] = float(ws.time) - float(R.grace) - 1.0
+	er.tick(float(R.fade_time))
+	_check(is_equal_approx(er.paleness(st0.id), p1), "with the setting off, nothing fades")
+	Game.settings.reerase = true
+	for k in 10:
+		er.tick(float(R.fade_time) / 4.0)
+	_check(String(er.state(st0.id).state) == "erased" and not (st0.p in er.campfires()), "fully faded, the site is bare again and its fire goes out")
+	w.player.position = st0.p + Vector2(float(st0.r) + 100.0, 0)
+	er.tick(DT)
+	_check(er.guardian_alive(st0.id), "and its guardian comes back")
+	_check(Game.ch.fragments.size() == 2, "torn pages already found stay found")
+
+	# -- Saves
+	var st1: Dictionary = L.SITES[1]
+	er.restore(String(st1.id))
+	Game.save_game()
+	var back: Dictionary = Game.load_game()
+	_check(back.fragments == ["ledger", "hymn"] and String(Game.world.sites[st1.id].state) == "restored" and String(Game.world.sites[st0.id].state) == "erased",
+		"saving and loading keeps the world (sites written back, faded) and the torn pages")
+	var old := _book_char("water", "echo")
+	old.erase("fragments")
+	old.save_version = 4
+	old.level = 9
+	var mig: Dictionary = Game.migrate(old.duplicate(true))
+	_check(int(mig.save_version) == GameData.SAVE_VERSION and mig.fragments == [] and int(mig.level) == 9 and String(mig.el) == "water" and String(mig.aspect.id) == "echo",
+		"an older save gains torn pages without losing its book, level or chapter")
+	var fresh: Dictionary = Game.migrate_world({"sites": {st1.id: {"state": "restored", "pale": 0.2}}})
+	_check(String(fresh.sites[st1.id].state) == "restored" and fresh.sites.size() == L.SITES.size(), "an older world keeps what was written back and gains any new sites")
+	w.queue_free()
+	await get_tree().process_frame
+
+	Game.settings = keep_settings
 	Game.ch = keep
 	main_w.visible = true
 	main_w.hud.visible = true

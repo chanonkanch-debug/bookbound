@@ -91,7 +91,7 @@ func _ready() -> void:
 	settings_box = VBoxContainer.new()
 	settings_box.add_theme_constant_override("separation", 10)
 	stack.add_child(settings_box)
-	for k in ["hitstop", "shake", "ui_scale", "show_numbers"]:
+	for k in ["hitstop", "shake", "ui_scale", "reerase", "show_numbers"]:
 		var b := _button("", _cycle.bind(k))
 		setting_btns[k] = b
 		settings_box.add_child(b)
@@ -193,6 +193,8 @@ static func key_lines(ch: Dictionary) -> Array:
 				listed = bare and not ch.get("hands", {}).get("learned", []).is_empty()
 			"rested":
 				listed = ch.get("rested", false) or ch.get("nudged", {}).get("rest", false)
+			"fragments":
+				listed = not ch.get("fragments", []).is_empty()
 			"lastpage":
 				listed = not bare and ch.aspect.get("awakened", false) and ch.aspect.get("id", "") == "lastpage"
 			_:

@@ -18,6 +18,9 @@ const Casting := preload("res://scripts/world/casting.gd")
 const Terrain := preload("res://scripts/world/terrain.gd")
 const Discovery := preload("res://scripts/world/discovery.gd")
 const Hands := preload("res://scripts/world/hands.gd")
+const Erasure := preload("res://scripts/world/erasure.gd")
+const TornPages := preload("res://scripts/world/torn_pages.gd")
+const SiteFx := preload("res://scripts/util/site_fx.gd")
 const HudScript := preload("res://scripts/ui/hud.gd")
 const BookScript := preload("res://scripts/ui/book_overlay.gd")
 const DesignerScript := preload("res://scripts/ui/designer_panel.gd")
@@ -25,6 +28,7 @@ const JournalScript := preload("res://scripts/ui/journal_overlay.gd")
 const MapScript := preload("res://scripts/ui/map_overlay.gd")
 const RestScript := preload("res://scripts/ui/rest_overlay.gd")
 const PauseScript := preload("res://scripts/ui/pause_menu.gd")
+const FragmentsScript := preload("res://scripts/ui/fragments_overlay.gd")
 
 
 ## A node that draws with a function from World, so ground and effects can sit
@@ -44,6 +48,8 @@ var casting
 var terrain
 var discovery
 var hands
+var erasure                 # The Unwritten, Phase 2: erasure sites and restoring (Game.world)
+var pages                   # The Unwritten, Phase 2: torn pages lying in the world
 var hud
 var book
 var designer
@@ -51,6 +57,7 @@ var journal_ui
 var map_ui
 var rest_ui
 var pause_ui
+var fragments_ui
 var camera: Camera2D
 var under: Drawer
 var over: Drawer
@@ -122,7 +129,12 @@ func _ready() -> void:
 	for i in 900:
 		var a := randf() * TAU
 		var d := sqrt(randf()) * GameData.WORLD_RADIUS
-		scribbles.append({"p": Vector2(cos(a), sin(a)) * d, "a": randf_range(-0.6, 0.6), "l": randf_range(4, 9), "k": randf() < 0.15})
+		var sp := Vector2(cos(a), sin(a)) * d
+		var in_site := ""   # scribbles inside an erasure site vanish while it is bare
+		for es in GameData.Lore.SITES:
+			if sp.distance_to(es.p) < float(es.r) * 1.1:
+				in_site = es.id
+		scribbles.append({"p": sp, "a": randf_range(-0.6, 0.6), "l": randf_range(4, 9), "k": randf() < 0.15, "site": in_site})
 
 	under = Drawer.new()
 	under.fn = _draw_under
@@ -152,6 +164,8 @@ func _ready() -> void:
 	chapter = HiddenChapter.new(self)
 	casting = Casting.new(self)
 	terrain = Terrain.new()
+	erasure = Erasure.new(self)
+	pages = TornPages.new(self)
 	discovery = Discovery.new(self)
 	hands = Hands.new(self)
 	hud = HudScript.new()
@@ -175,6 +189,9 @@ func _ready() -> void:
 	pause_ui = PauseScript.new()
 	pause_ui.w = self
 	add_child(pause_ui)
+	fragments_ui = FragmentsScript.new()
+	fragments_ui.w = self
+	add_child(fragments_ui)
 	if Game.has_book() and not ch.ui.get("book", false):
 		unlock("book")
 	get_viewport().size_changed.connect(apply_ui_scale)
@@ -268,7 +285,9 @@ func apply_ui_scale() -> void:
 
 ## Closes the open book, journal or map. Returns true if one was open.
 func close_overlays() -> bool:
-	if book.visible:
+	if fragments_ui.visible:
+		fragments_ui.close()
+	elif book.visible:
 		book.close()
 	elif journal_ui.visible:
 		journal_ui.close_journal()
@@ -297,6 +316,8 @@ func _update(dt: float) -> void:
 	_tick_rest(dt)
 	rest_pressed = false
 	_tick_region()
+	erasure.tick(dt)
+	pages.tick(dt)
 	_tick_unlocks()
 	_tick_nudges(dt)
 	ally.tick(dt)
@@ -332,7 +353,7 @@ func _update(dt: float) -> void:
 
 	var alive: Array = []
 	for e in enemies:
-		if e.dead or e.position.distance_to(player.position) > 1300:
+		if e.dead or (e.position.distance_to(player.position) > 1300 and e.guardian == ""):
 			e.queue_free()
 		else:
 			alive.append(e)
@@ -366,6 +387,12 @@ func spawn(initial: bool) -> void:
 		var d := randf_range(240, 560) if initial else randf_range(540, 740)
 		var base: Vector2 = Vector2.ZERO if initial else player.position
 		var p: Vector2 = base + Vector2(cos(a), sin(a)) * d
+		if not initial and attempt == 0:
+			var gp = erasure.gather_point(player.position)   # monsters gather at bare sites
+			if gp != null:
+				p = gp
+		if erasure.calm(p):
+			return   # restored places are quieter
 		var rd := p.length()
 		if rd > GameData.WORLD_RADIUS - 20 or rd < GameData.TOWN_RADIUS + 110:
 			continue
@@ -508,6 +535,8 @@ func hit(e, base: float, el: String, src: String, move := "") -> void:
 	if src == "player" and e.first_hit_t < 0.0:
 		e.first_hit_t = time
 	m *= _affinity(e, el, src)
+	if e.guardian != "" and src == "player":
+		m *= float(GameData.Lore.GUARDIAN_INK.get(el, 1.0))   # single-target balance against guardians
 	if e.dead:
 		return
 	var a: Dictionary = ch.aspect
@@ -678,6 +707,7 @@ func kill(e, src: String) -> void:
 	streak += 1
 	streak_t = float(GameData.STREAK_WINDOW)
 	chapter.on_kill(e, src)
+	erasure.on_kill(e)
 	gain_xp(e.xp)
 
 
@@ -1124,8 +1154,8 @@ func _crash(a, b) -> void:
 ## Everyone who sees a reaction (you hit it, or Mira did) counts toward learning it.
 func _affinity(e, el: String, src: String) -> float:
 	var r: Dictionary = discovery.reaction(e, el)
-	if r.is_empty() or src == "world":
-		return 1.0
+	if r.is_empty() or src == "world" or e.guardian != "":
+		return 1.0   # guardians are knotted out of the pale: no element moves them more than another
 	discovery.saw_reaction(e, el)
 	match r.type:
 		"weak", "resists":
@@ -1273,7 +1303,7 @@ func can_rest() -> bool:
 
 
 func near_campfire() -> bool:
-	for f in GameData.CAMPFIRES:
+	for f in erasure.campfires():
 		if player.position.distance_to(f) < float(GameData.REST.campfire_range) + (GameData.TOWN_RADIUS if f == Vector2.ZERO else 0.0):
 			return true
 	return false
@@ -1320,6 +1350,7 @@ func finish_rest() -> void:
 	var in_hearth: bool = player.position.length() < GameData.TOWN_RADIUS
 	var hp_frac: float = player.hp / Game.max_hp()
 	var n: int = Game.write_levels(ch)
+	erasure.on_rest(player.position)   # resting at the centre of a cleared site writes it back
 	ch.rested = true
 	ch.opened.rest = true
 	unlock("journal")   # a rest is when the journal gets written, so it appears by then at the latest
@@ -1576,10 +1607,17 @@ func _view_rect() -> Rect2:
 func _draw_under(d: Node2D) -> void:
 	var view := _view_rect()
 	var soft: Color = C.ink_soft
+	for es in GameData.Lore.SITES:
+		if view.grow(float(es.r) * 2.0).has_point(es.p):
+			var est: Dictionary = erasure.state(es.id)
+			SiteFx.draw_site(d, es, erasure.paleness(es.id), String(est.state), float(erasure.fx.get(es.id, -1.0)), time)
 	for s in scribbles:
 		if not view.has_point(s.p):
 			continue
-		var col := Color(soft, 0.35 if s.k else 0.18)
+		var gone: float = erasure.paleness(s.site) if s.site != "" else 0.0
+		if gone >= 1.0:
+			continue
+		var col := Color(soft, (0.35 if s.k else 0.18) * (1.0 - gone))
 		if s.k:
 			d.draw_arc(s.p, s.l * 0.4, 0, TAU, 10, col, 1.2)
 		else:
@@ -1595,12 +1633,22 @@ func _draw_under(d: Node2D) -> void:
 	Ink.text_c(d, Vector2(0, -town + 32), "The Hearth", 20, Color(C.gilt, 0.85))
 	d.draw_colored_polygon(Ink.blob(Vector2.ZERO, 9.0, 1.0, time * 1.5), C.fire)
 	_draw_fire_call(d, Vector2.ZERO)
+	# One house per erasure site; its window lights once the site is written back.
+	for i in GameData.Lore.SITES.size():
+		var hs: Dictionary = GameData.Lore.SITES[i]
+		var lit: float = 1.0 - erasure.paleness(hs.id) * 2.0 if erasure.is_restored(hs.id) else 0.0
+		SiteFx.draw_window(d, GameData.Lore.HEARTH_WINDOWS[i], clampf(lit, 0.0, 1.0), time)
 
 	for pt in terrain_patches_for_draw():
-		_draw_patch(d, pt)
-	for f in GameData.CAMPFIRES:
+		if not pt.faded:   # near a bare site the ground has lost its nature, and its look
+			_draw_patch(d, pt)
+	for f in erasure.campfires():
 		if f != Vector2.ZERO:
 			_draw_campfire(d, f)
+	for fr in GameData.Lore.FRAGMENTS:
+		var fp = pages.where(fr)
+		if fp != null and view.grow(30.0).has_point(fp):
+			SiteFx.draw_page(d, fp, String(fr.where), pages.seen(fr, player.position), time)
 	if not ch.ui.get("map", false):
 		# A torn map scrap lying in the grass, with a slow glint.
 		var mp: Vector2 = GameData.MAP_SCRAP
@@ -1883,6 +1931,20 @@ func _hand_hit(e, move: String, base: float) -> Array:
 
 
 ## Where monster `e` should head: your decoy if one is out and closer, else you.
+## Designer button (F1): beat the nearest site's guardian and write it back at once.
+func dev_restore_nearest() -> void:
+	var best := {}
+	for s in GameData.Lore.SITES:
+		if best.is_empty() or player.position.distance_to(s.p) < player.position.distance_to(best.p):
+			best = s
+	var g = erasure.guardians.get(best.id)
+	if g != null and is_instance_valid(g):
+		g.queue_free()
+		enemies.erase(g)
+	erasure.guardians.erase(best.id)
+	erasure.restore(String(best.id))
+
+
 func lure_for(e) -> Vector2:
 	if decoy_t > 0.0 and e.position.distance_to(decoy_p) < e.position.distance_to(player.position):
 		return decoy_p

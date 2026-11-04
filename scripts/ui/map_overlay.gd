@@ -26,7 +26,7 @@ class MapCanvas extends Control:
 		var names := [[0.0, "The Hearth"], [380.0, GameData.REGIONS[1].name], [850.0, GameData.REGIONS[2].name], [1300.0, GameData.REGIONS[3].name]]
 		for n in names:
 			Ink.text_c(self, c + Vector2(0, -float(n[0]) * sc - 6.0), n[1], 13, C.ink_soft)
-		for fire in GameData.CAMPFIRES:
+		for fire in w.erasure.campfires():   # restored sites have a fire of their own
 			var fp: Vector2 = c + fire * sc
 			draw_colored_polygon(Ink.blob(fp, 4.0, 1.0, 0.0), C.fire)
 		var pp: Vector2 = c + w.player.position * sc

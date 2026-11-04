@@ -1,6 +1,12 @@
 extends Node
 ## Every tunable number and text in Bookbound lives in this file.
 ## Change a value, press F5 in Godot, and play.
+##
+## Split files (still reached through GameData):
+##   scripts/data/lore_data.gd   The Unwritten, Phase 2: erasure sites, restoring, re-erasure,
+##                               torn pages and their text. Use as GameData.Lore.SITES etc.
+
+const Lore := preload("res://scripts/data/lore_data.gd")
 
 const TOWN_RADIUS := 160.0        # The Hearth: safe zone in the middle of the map
 const WORLD_RADIUS := 1500.0      # Edge of the world
@@ -355,14 +361,16 @@ const GIVE_UP_TEXT := "Close this book forever"
 const GIVE_UP_CONFIRM := "Press again to give up this book"
 
 # Saves. Bump SAVE_VERSION when the save format changes and add a step in Game.migrate().
-const SAVE_VERSION := 4
+const SAVE_VERSION := 5         # 5: torn pages found (The Unwritten, Phase 2)
+const WORLD_SAVE_VERSION := 1   # the world's own save: sites restored, erasure (scripts/world/erasure.gd)
 # Settings, saved in user://settings.cfg (not in the save, so they're the same for every character).
 # Changed in the pause menu (see PAUSE below) or the F1 designer view.
 #   show_numbers   brings back a small readout of every number (for testing and accessibility)
 #   hitstop        a very short hold on heavy hits (FEEL.hitstop_time)
 #   shake          a very small screen shake on big impacts (off by default, it can fight the slow mood)
 #   ui_scale       size of every menu and on-screen mark (one of UI_SCALES)
-const SETTINGS := {"show_numbers": false, "hitstop": true, "shake": false, "ui_scale": 1.0}
+#   reerase        restored places slowly fade again when left alone (The Unwritten, Phase 2)
+const SETTINGS := {"show_numbers": false, "hitstop": true, "shake": false, "ui_scale": 1.0, "reerase": true}
 const UI_SCALES := [0.85, 1.0, 1.15, 1.3]
 
 # ================================================================ Phase 3: learning by experimenting
@@ -671,12 +679,14 @@ const PAUSE := {
 	"hitstop": "Hold on heavy blows",
 	"shake": "Shake on big impacts",
 	"ui_scale": "Size of the page",
+	"reerase": "The pale returns to forgotten places",
 	"on": "on", "off": "off",
 	"scales": ["smaller", "as written", "larger", "largest"],   # one per UI_SCALES
 }
 # One line per control: [what, keyboard, gamepad, shown once this is true]
 #   "always", or a ch.ui part ("journal", "map", "book", "hands"), "pages" (more than one page or
-#   stance), "learned" (a move learned from a monster), "lastpage" (the Last Page awakened).
+#   stance), "learned" (a move learned from a monster), "lastpage" (the Last Page awakened),
+#   "fragments" (a torn page found).
 const KEY_PAGE := [
 	["Walk", "W A S D, or hold the left mouse button", "left stick", "always"],
 	["Aim", "the mouse", "right stick", "hands"],
@@ -686,6 +696,7 @@ const KEY_PAGE := [
 	["Rest", "hold R, or press it once by a fire", "Y", "rested"],
 	["Open my book", "B", "Back", "book"],
 	["My journal", "J", "D-pad up", "journal"],
+	["Torn pages I found", "Q or E in my book or journal", "a shoulder, in the book", "fragments"],
 	["My map", "M", "D-pad down", "map"],
 	["The last page", "hold 4", "hold the left trigger", "lastpage"],
 	["Close the book for now", "Esc", "Start", "always"],
