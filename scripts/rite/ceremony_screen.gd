@@ -69,6 +69,7 @@ func _ready() -> void:
 	enter_btn.visible = false
 	enter_btn.pressed.connect(func(): enter_world.emit())
 	right.add_child(enter_btn)
+	open_btn.call_deferred("grab_focus")   # so a gamepad can press A
 
 
 func _label(text: String, size: int, col: Color, wrap := false) -> Label:
@@ -132,3 +133,4 @@ func _reveal() -> void:
 	traits.visible = true
 	enter_btn.visible = true
 	open_btn.visible = false
+	enter_btn.grab_focus()

@@ -12,6 +12,22 @@ func _ready() -> void:
 	if "--autotest" in OS.get_cmdline_user_args():
 		_autotest()
 		return
+	for mode in ["--showcase", "--stress"]:
+		if mode in OS.get_cmdline_user_args():
+			var sc := preload("res://scripts/dev/showcase.gd").new()
+			add_child(sc)
+			if mode == "--showcase":
+				await sc.run_showcase()
+			else:
+				await sc.run_stress()
+			get_tree().quit()
+			return
+	if "--firsthour" in OS.get_cmdline_user_args():
+		var fh := preload("res://scripts/dev/first_hour.gd").new()
+		add_child(fh)
+		await fh.run_first_hour()
+		get_tree().quit()
+		return
 	if "--balance" in OS.get_cmdline_user_args():
 		var bot := preload("res://scripts/dev/balance.gd").new()
 		add_child(bot)
@@ -117,6 +133,15 @@ func _autotest() -> void:
 			nothing = false
 	_check(nothing and w.hud.dock.modulate.a < 0.01, "a new player sees only the world: no interface parts yet")
 	_check(not Game.show_numbers(), "show_numbers is off by default")
+	# The journal starts with your first kill: a discovery noticed before it waits for it.
+	var early_line: String = GameData.TERRAIN_LINES.open_reach
+	w.unlock("journal")
+	w.discovery.saw_terrain("open_reach")
+	var waited: bool = not (early_line in Game.ch.journal)
+	w.journal("first_kill")
+	var jl: Array = Game.ch.journal
+	_check(waited and jl.find(early_line) > jl.find(GameData.JOURNAL.first_kill), "a discovery before the first kill waits, then follows it")
+	Game.ch.ui.journal = false
 	print("Bare hands:")
 	# Walk out, pull a few monsters close, then use every stance on them.
 	w.player.steer = Vector2.RIGHT
@@ -326,6 +351,8 @@ func _autotest() -> void:
 	await _step(w, 30)
 	print("Discoveries (Phase 3):")
 	await _test_discoveries(w)
+	print("Polish (The Unwritten, Phase 1):")
+	await _test_polish(w)
 	print("Saves (Phase 2):")
 	_test_migration()
 	print("Autotest finished with %d failure(s). Level %d, enemies alive %d" % [failures, w.ch.level, w.enemies.size()])
@@ -523,3 +550,209 @@ func _test_hands(w) -> void:
 	await _step(w, 30)
 	w.auto_rest_ui = keep_auto
 	_clear(w)
+
+
+# ================================================================ The Unwritten, Phase 1: polish
+
+## A separate world with no scene switching attached, for tests that would otherwise
+## jump to the ceremony screen.
+func _side_world():
+	var sw = World.new()
+	add_child(sw)
+	await get_tree().process_frame
+	sw.set_process(false)
+	_clear(sw)
+	return sw
+
+
+func _bare_char(level := 1) -> Dictionary:
+	var c := Game.new_character("Test", "orphan")
+	c.level = level
+	return c
+
+
+func _book_char(el := "earth", aspect := "stillness") -> Dictionary:
+	var c := Game.new_character("Test", "orphan")
+	c.el = el
+	c.thick = "medium"
+	c.level = 6
+	c.spells = [{"i": 0, "lvl": 3}, {"i": 1, "lvl": 2}]
+	c.aspect = {"id": aspect, "progress": 0, "stage": 0, "awakened": false, "margins": [], "need": 4, "streak": 3}
+	c.ui.book = true
+	return c
+
+
+func _test_polish(main_w) -> void:
+	var keep: Dictionary = Game.ch
+	var keep_settings: Dictionary = Game.settings.duplicate()
+	main_w.set_process(false)
+	main_w.visible = false
+	main_w.hud.visible = false
+
+	# -- Settings and the pause menu
+	Game.ch = _bare_char()
+	var w = await _side_world()
+	w.pause_ui.open()
+	_check(w.pause_ui.visible and w.paused, "Esc / Start opens the pause menu and the world waits")
+	var lines: Array = w.pause_ui.key_lines(Game.ch)
+	var labels: Array = lines.map(func(l): return l[0])
+	_check("Walk" in labels and not ("The last page" in labels) and not ("Open my book" in labels), "the key page lists only what this character has found (no book, no last page yet)")
+	var lp := _book_char("fire", "lastpage")
+	lp.aspect.awakened = true
+	_check("The last page" in w.pause_ui.key_lines(lp).map(func(l): return l[0]), "the last page appears on the key page only once it has awakened")
+	var shake0: bool = Game.settings.shake
+	w.pause_ui._cycle("shake")
+	_check(Game.settings.shake != shake0, "a setting changes from the pause menu")
+	var cf := ConfigFile.new()
+	_check(cf.load(Game.SETTINGS_PATH) == OK and bool(cf.get_value("settings", "shake")) == Game.settings.shake, "settings are saved to the settings file")
+	w.pause_ui._cycle("ui_scale")
+	_check(not is_equal_approx(w.hud.scale.x, 1.0) and is_equal_approx(w.hud.scale.x, float(Game.settings.ui_scale)), "the page size setting scales the interface")
+	w.pause_ui.close()
+	_check(not w.paused, "closing the pause menu returns to the world")
+	_check(not GameData.SETTINGS.shake and GameData.SETTINGS.hitstop, "shake starts off and hit-pause starts on")
+	Game.settings.hitstop = true
+	var foe = _spawn_at(w, 1, w.player.position + Vector2(60, 0))
+	w.hit(foe, foe.max_hp * 0.3, "none", "player")
+	_check(w.hitstop > 0.0, "a heavy hit holds the world still for a moment (hit-pause on)")
+	w.hitstop = 0.0
+	Game.settings.hitstop = false
+	w.hit(foe, foe.max_hp * 0.3, "none", "player")
+	_check(w.hitstop == 0.0, "no hit-pause when the setting is off")
+	_clear(w)
+
+	# -- Gamepad
+	var pad_ok := true
+	for pair in [["journal", JOY_BUTTON_DPAD_UP], ["map", JOY_BUTTON_DPAD_DOWN], ["pause", JOY_BUTTON_START], ["open_book", JOY_BUTTON_BACK], ["read", JOY_BUTTON_A], ["rest", JOY_BUTTON_Y]]:
+		var found := false
+		for ev in InputMap.action_get_events(pair[0]):
+			if ev is InputEventJoypadButton and ev.button_index == pair[1]:
+				found = true
+		pad_ok = pad_ok and found
+	var stick := false
+	for ev in InputMap.action_get_events("move_left"):
+		if ev is InputEventJoypadMotion:
+			stick = true
+	_check(pad_ok and stick, "a gamepad can move, read, rest, and open the journal, map, book and pause menu")
+
+	# -- First hour fixes
+	w.player.position = Vector2(0, 40)
+	Game.ch.xp = Game.xp_next(1) + 1
+	for f in roundi(float(GameData.NUDGES.rest_fire.after) / DT) + 10:
+		w._update(DT)
+	_check(Game.ch.nudged.get("rest", false), "with a level waiting, sitting by the Hearth fire shows the R nudge")
+	var lurker = _spawn_at(w, 0, Vector2(GameData.TOWN_RADIUS + 30.0, 0))
+	lurker.aggro = true
+	_check(w.can_rest(), "nothing can wake you inside the Hearth")
+	for f in roundi((float(GameData.MONSTERS.hearth_give_up) + 1.0) / DT):
+		w._update(DT)
+	_check(not lurker.aggro, "a monster pacing at the Hearth's edge gives up and wanders off")
+	_clear(w)
+	Game.ch.hands.lessons = {"Inkling": 99, "Blot": 99}
+	Game.ch.hands.uses = {"jab": 999}
+	var got: Array = w.hands.on_rest()
+	_check(got.size() == int(GameData.HAND_REST_MAX), "only one new move or growth per rest; the rest wait for the next one")
+	w.unlock("journal")
+	w.hud.whisper_queue.clear()
+	w.hud.whispering = false
+	for t in ["one", "two", "three"]:
+		w.hud.add_log(t)
+	_check(w.hud.whisper.text == "one" and w.hud.whisper_queue.size() == 2, "journal lines that arrive together wait their turn")
+	for k in int(GameData.FEEL.splat_max) + 20:
+		w._splat(Vector2.ZERO, 5.0, 30.0, 0.3)
+	_check(w.splats.size() == int(GameData.FEEL.splat_max), "lingering splatters are capped")
+	w.queue_free()
+	await get_tree().process_frame
+
+	# -- Hidden chapter hints are spaced out
+	Game.ch = _book_char()
+	w = await _side_world()
+	for k in 4:
+		w.chapter.progress()
+	w._update(DT)
+	var st1: int = int(Game.ch.aspect.stage)
+	for f in 30:
+		w._update(DT)
+	var st2: int = int(Game.ch.aspect.stage)
+	for f in roundi(float(GameData.CHAPTER_TUNING.hint_gap) / DT) + 2:
+		w.chapter.tick(DT)
+	_check(st1 == 1 and st2 == 1 and int(Game.ch.aspect.stage) == 2, "margin hints come one at a time, well apart")
+
+	# -- Edge case: the hidden chapter awakens in the middle of a read
+	w.chapter.flush_hints()
+	var near_foe = _spawn_at(w, 0, w.player.position + Vector2(120, 0))
+	near_foe.spd = 0.0
+	w.player.mana = Game.max_mana()
+	w.read_held = true
+	await _step(w, 4)
+	var mana_mid: float = w.player.mana
+	_check(w.casting.reading and mana_mid < Game.max_mana(), "(setup) reading has started and ink was paid")
+	w.player.still = 1.0
+	w.open_book()
+	_check(Game.ch.aspect.awakened, "(setup) the chapter awakened when the book was opened")
+	_check(not w.casting.reading and w.casting.last_result == "cancelled" and absf(w.player.mana - Game.max_mana()) < 0.01, "opening the book mid-read closes the page and gives the ink back")
+	w.book.close()
+	var casts0: int = w.casting.casts
+	await _step(w, 20)
+	_check(w.casting.casts == casts0 and not w.casting.reading, "still holding the key afterwards doesn't cast by itself")
+	w.read_held = false
+	await _step(w, 2)
+
+	# -- Edge case: dying while reading
+	w.read_held = true
+	await _step(w, 3)
+	w.hurt(99999.0)
+	_check(w.player.dead_t > 0.0 and not w.casting.reading, "dying in the middle of a read ends it")
+	await _step(w, roundi(3.0 / DT))
+	_check(w.player.dead_t <= 0.0 and not w.casting.reading and w.casting.casts == casts0, "after waking, holding the key from before doesn't cast")
+	w.read_held = false
+	await _step(w, 2)
+	w.queue_free()
+	await get_tree().process_frame
+
+	# -- Edge case: resting again while the ceremony is opening
+	Game.ch = _bare_char(GameData.CEREMONY_LEVEL)
+	w = await _side_world()
+	var calls := [0]
+	w.go_to_ceremony.connect(func(): calls[0] += 1)
+	w.player.position = Vector2(0, 30)
+	w.finish_rest()
+	w.finish_rest()
+	w.rest_ui.close()
+	await get_tree().create_timer(0.8).timeout
+	_check(calls[0] == 1, "resting twice while the ceremony is opening opens it once (%d)" % calls[0])
+	w.queue_free()
+	await get_tree().process_frame
+
+	# -- Saves at every stage of the interface appearing
+	var stages := [[], ["hands"], ["hands", "journal"], ["hands", "journal", "margins"], ["hands", "journal", "margins", "map"]]
+	var all_ok := true
+	for book_too in [false, true]:
+		for stg in stages:
+			var c: Dictionary = _book_char() if book_too else _bare_char(3)
+			for k in GameData.UI_PARTS:
+				c.ui[k] = k in stg or (k == "book" and book_too)
+			Game.ch = c
+			Game.save_game()
+			var back: Dictionary = Game.load_game()
+			var same := true
+			for k in GameData.UI_PARTS:
+				same = same and bool(back.ui[k]) == bool(c.ui[k])
+			Game.ch = back
+			var lw = await _side_world()
+			await get_tree().process_frame
+			var dock_on: bool = lw.hud.dock.modulate.a > 0.5
+			var want_dock: bool = (book_too and back.ui.book) or (not book_too and back.ui.hands)
+			var mark_on: bool = lw.hud.journal_mark.modulate.a > 0.5
+			if not (same and dock_on == want_dock and mark_on == bool(back.ui.journal)):
+				all_ok = false
+				print("    stage %s (book %s): same %s dock %s/%s mark %s" % [stg, book_too, same, dock_on, want_dock, mark_on])
+			lw.queue_free()
+			await get_tree().process_frame
+	_check(all_ok, "saving and loading at every stage of the interface keeps exactly what had appeared")
+
+	Game.settings = keep_settings
+	Game.set_setting("shake", keep_settings.shake)
+	Game.ch = keep
+	main_w.visible = true
+	main_w.hud.visible = true
+	await get_tree().process_frame

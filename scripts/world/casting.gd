@@ -23,6 +23,7 @@ var recover_t := 0.0
 var strain_t := 0.0        # overcast strain, for the visuals
 var armed := true          # the read key must be let go between casts (no auto-repeat)
 var fizzle_fx := 0.0       # >0 right after a fizzle or broken read, for the visuals
+var ready_fx := 0.0        # >0 just after the read became ready to cast, for the visuals
 var last_result := ""      # "cast", "fizzle", "broken" or "refused" (used by tests and the bot)
 var casts := 0             # total successful casts (designer view, balance bot)
 var fizzles := 0
@@ -78,6 +79,14 @@ func stats_for(i: int) -> Dictionary:
 	return Game.spell_stats(w.ch.spells[i])
 
 
+## Casting ink the open page costs (0 while turning). Used by the drawing code to show
+## when a page can't pay for itself.
+func page_cost() -> float:
+	if turning() or w.ch != Game.ch or page >= page_count():
+		return 0.0
+	return float(stats_for(page).get("mana", 0.0))
+
+
 ## 0..1 progress toward the minimum read time, and 0..1 overcharge.
 func progress() -> float:
 	if not reading:
@@ -101,6 +110,7 @@ func tick(dt: float, held: bool, want_slot := -1) -> void:
 	recover_t = maxf(0.0, recover_t - dt)
 	strain_t = maxf(0.0, strain_t - dt)
 	fizzle_fx = maxf(0.0, fizzle_fx - dt)
+	ready_fx = maxf(0.0, ready_fx - dt)
 	if turning():
 		turn_t -= dt
 		if turn_t <= 0.0:
@@ -111,7 +121,10 @@ func tick(dt: float, held: bool, want_slot := -1) -> void:
 				turn_t = turn_time()
 	if reading:
 		var moving: bool = w.player.still <= 0.0
+		var was_ready: bool = t >= float(st.read)
 		t += dt * (float(GameData.READ.move_mult) if moving else 1.0)
+		if not was_ready and t >= float(st.read):
+			ready_fx = float(GameData.READABILITY.ready_flash)
 		if not held:
 			armed = true
 			release()
@@ -193,6 +206,18 @@ func _fizzle(kind: String) -> void:
 	fizzle_fx = 0.5
 	recover_t = float(GameData.READ.recover)
 	paid = 0.0
+
+
+## Closes the page without casting (the book was opened, or you died): the ink comes back
+## in full, nothing fizzles, and the key must be let go before the next read.
+func cancel() -> void:
+	if not reading:
+		return
+	reading = false
+	w.player.mana = minf(Game.max_mana(), w.player.mana + paid)
+	paid = 0.0
+	armed = false
+	last_result = "cancelled"
 
 
 ## Called when the book changes (ceremony) or a new world opens.

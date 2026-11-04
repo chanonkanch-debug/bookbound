@@ -257,6 +257,9 @@ const CHAPTER_TUNING := {
 	"hunger_streak": 3,        # Hunger counts kills made while on a streak of this many or more (was 5)
 	"hunger_act": [3, 4],      # ...and awakens when opened on a streak this long (rolled per book, was 8-12)
 	"echo_window": 4.0,        # seconds after Mira hits an enemy that your kill still counts for Echo (was 2)
+	# The Unwritten, Phase 1: margin hints come at least this many seconds of play apart. The
+	# first-hour bots got all four Stillness hints inside ten seconds of receiving the book.
+	"hint_gap": 150.0,
 }
 
 # ================================================================ Phase 2: minimal interface, slow progression
@@ -270,6 +273,7 @@ const UNLOCK := {
 }
 const MAP_SCRAP := Vector2(-430.0, 250.0)   # where the torn map lies (Inkling Fields)
 const WHISPER_TIME := 6.0        # seconds a new journal line or margin note stays before fading
+const WHISPER_QUEUED := 3.5      # ...or this long when more lines are waiting behind it
 
 # Resting replaces instant level-ups. XP is earned quietly; levels are only written when you rest.
 # Hold R to rest anywhere, or press R once at a campfire (they're in the Hearth and every region).
@@ -295,6 +299,10 @@ const NUDGES := {
 	"attack": {"after": 60.0, "glyph": "Space"},          # a monster has been near for this long, no attack
 	"page": {"after": 90.0, "glyph": "Q  E"},             # you have more than one page/stance and never turned
 	"rest": {"after": 30.0, "glyph": "R"},                # you're hurt and safe and have never rested
+	# The Unwritten, Phase 1: the first-hour bots showed people fighting for 17-35 minutes before
+	# the rest nudge, because walking back to the Hearth heals you before the 30 s are up.
+	# This one shows at a fire (the Hearth counts) when levels are waiting and you've never rested.
+	"rest_fire": {"after": 5.0, "glyph": "R"},
 	"book": {"after": 120.0, "glyph": "B"},               # you have a book and have never opened it
 	"journal": {"after": 45.0, "glyph": "J"},             # the journal is there and never opened
 }
@@ -323,6 +331,12 @@ const JOURNAL := {
 	"all_regions": "I have walked all of it now. I could draw it from memory.",
 	"page_turn": "The pages are stiff. Turning them takes time I don't always have.",
 	"first_charge": "I held the words longer, and they came out heavier.",
+	# The Unwritten, Phase 1: small first sightings that filled quiet stretches after the ceremony.
+	"first_evolve": "A gold frame grew around the page. The words on it changed.",
+	"combo_lightning": "Lightning found the wet one and ran through it twice.",
+	"combo_fire": "Fire on wet ink hissed into steam, and bit deeper.",
+	"combo_earth": "Stone and water made mud. It could barely lift its feet.",
+	"combo_wind": "Wind caught the wet one and threw the water onto the rest.",
 }
 
 # Death screen
@@ -334,9 +348,14 @@ const GIVE_UP_CONFIRM := "Press again to give up this book"
 
 # Saves. Bump SAVE_VERSION when the save format changes and add a step in Game.migrate().
 const SAVE_VERSION := 4
-# Hidden settings, saved in user://settings.cfg. show_numbers brings back a small readout
-# (for testing and accessibility). Toggle it in the F1 designer view.
-const SETTINGS := {"show_numbers": false}
+# Settings, saved in user://settings.cfg (not in the save, so they're the same for every character).
+# Changed in the pause menu (see PAUSE below) or the F1 designer view.
+#   show_numbers   brings back a small readout of every number (for testing and accessibility)
+#   hitstop        a very short hold on heavy hits (FEEL.hitstop_time)
+#   shake          a very small screen shake on big impacts (off by default, it can fight the slow mood)
+#   ui_scale       size of every menu and on-screen mark (one of UI_SCALES)
+const SETTINGS := {"show_numbers": false, "hitstop": true, "shake": false, "ui_scale": 1.0}
+const UI_SCALES := [0.85, 1.0, 1.15, 1.3]
 
 # ================================================================ Phase 3: learning by experimenting
 # Monster affinities. Hidden: each monster reacts to some elements in its own way.
@@ -475,6 +494,7 @@ const MONSTERS := {
 	"interrupt_frac": 0.12,    # a hit for this share of its max health (or any push) breaks a wind-up
 	"stagger": 0.6,            # seconds a monster reels after being interrupted
 	"pair_offset": 30.0,       # how far apart a pair of Inklings tries to stand when flanking
+	"hearth_give_up": 4.0,     # seconds a monster paces at the Hearth's edge before it wanders off
 }
 
 const REGIONS := [
@@ -587,3 +607,66 @@ const HAND_SECRETS := {
 # 4. Your hands take on the colour of the element your fighting leans toward.
 #    It starts once that element's share is above an even split by `start`, and is full at `full`.
 const HAND_TINT := {"start": 0.04, "full": 0.25, "max_alpha": 0.85}
+
+# The Unwritten, Phase 1: at most this many moves are learned or grow at one rest. The rest
+# wait for the next rest, so each one is its own moment instead of nine lines at once.
+const HAND_REST_MAX := 1
+
+
+# ================================================================ The Unwritten, Phase 1: polish
+# Feel. Everything here is subtle on purpose; the game is slow and quiet.
+const FEEL := {
+	"hitstop_time": 0.06,        # seconds the world holds still on a heavy hit (hit-pause setting)
+	"hitstop_frac": 0.12,        # a hit for this share of a monster's health counts as heavy...
+	"hitstop_hurt": 30.0,        # ...and so does a blow to you for this much damage or more
+	"shake_amount": 3.0,         # pixels of screen shake on a big impact (screen shake setting)
+	"shake_time": 0.25,          # seconds it takes to settle
+	"shake_hurt": 35.0,          # blows to you this heavy shake the screen
+	"splat_life": 5.0,           # seconds a hit splatter lingers (was 1.6)
+	"kill_splat_life": 14.0,     # seconds a monster's last splatter lingers (was 4)
+	"splat_hold": 0.6,           # share of its life a splatter stays fully dark before fading
+	"splat_max": 140,            # oldest splatters go first past this many (performance)
+	"page_turn_lift": 10.0,      # how far a turning page lifts off the book on the dock
+	"fire_call_range": 420.0,    # fires glow and spark when levels are waiting and you're this close
+}
+
+# Readability (all drawn, no numbers).
+const READABILITY := {
+	"windup_ring": 26.0,         # a wind-up ring starts this far outside the monster and closes on it
+	"read_ring_w": 3.5,          # width of the reading ring around you
+	"ready_flash": 0.18,         # seconds the ring flashes when the read is ready to cast
+	"low_ink_dash": true,        # the open page's lines go dashed and red-edged when it can't pay
+	"low_hp_pulse": 0.25,        # health share below which the screen edges pulse like a heartbeat
+}
+
+# Pause menu text. The key page only lists what the player has already found.
+const PAUSE := {
+	"title": "The book is closed for now",
+	"resume": "Back to the world",
+	"settings": "Settings",
+	"keys": "What my hands know",
+	"quit": "Rest here and leave",
+	"back": "Back",
+	"show_numbers": "Show numbers",
+	"hitstop": "Hold on heavy blows",
+	"shake": "Shake on big impacts",
+	"ui_scale": "Size of the page",
+	"on": "on", "off": "off",
+	"scales": ["smaller", "as written", "larger", "largest"],   # one per UI_SCALES
+}
+# One line per control: [what, keyboard, gamepad, shown once this is true]
+#   "always", or a ch.ui part ("journal", "map", "book", "hands"), "pages" (more than one page or
+#   stance), "learned" (a move learned from a monster), "lastpage" (the Last Page awakened).
+const KEY_PAGE := [
+	["Walk", "W A S D, or hold the left mouse button", "left stick", "always"],
+	["Aim", "the mouse", "right stick", "hands"],
+	["Read, then let go to cast", "hold Space or the right mouse button", "hold A", "hands"],
+	["Turn the page", "1 2 3, or Q E, or the mouse wheel", "the shoulder buttons", "pages"],
+	["Moves my hands learned", "4 5 6", "the shoulder buttons", "learned"],
+	["Rest", "hold R, or press it once by a fire", "Y", "rested"],
+	["Open my book", "B", "Back", "book"],
+	["My journal", "J", "D-pad up", "journal"],
+	["My map", "M", "D-pad down", "map"],
+	["The last page", "hold 4", "hold the left trigger", "lastpage"],
+	["Close the book for now", "Esc", "Start", "always"],
+]

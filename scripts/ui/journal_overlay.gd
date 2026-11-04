@@ -6,6 +6,7 @@ extends CanvasLayer
 const UiTheme := preload("res://scripts/ui/ui_theme.gd")
 
 var w
+var ui_root: Control
 var C: Dictionary = GameData.COLORS
 var list: VBoxContainer
 var beasts: VBoxContainer
@@ -17,7 +18,8 @@ var new_armed := false
 func _ready() -> void:
 	layer = 10
 	visible = false
-	var root := Control.new()
+	ui_root = Control.new()
+	var root := ui_root
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.theme = UiTheme.make()
 	add_child(root)
@@ -66,6 +68,7 @@ func _ready() -> void:
 	close.pressed.connect(close_journal)
 	row.add_child(close)
 	v.add_child(row)
+	UiTheme.fit(self, ui_root)
 
 
 func _label(text: String, size: int, col: Color) -> Label:

@@ -38,6 +38,7 @@ class Vignette extends Control:
 
 ## The bottom of the screen: stance marks before the ceremony, the book after.
 class Dock extends Control:
+	const Ink := preload("res://scripts/util/ink.gd")
 	var w
 	var glow := 0.0
 	func _draw() -> void:
@@ -54,7 +55,11 @@ class Dock extends Control:
 				var open: bool = i == (cs.turn_target if cs.turning() else cs.page)
 				var col := Color(C.ink, 0.9 if open else 0.3)
 				draw_circle(p, 17.0, Color(C.paper, 0.75 if open else 0.4))
-				draw_arc(p, 17.0, 0, TAU, 32, col, 2.0 if open else 1.0)
+				if open and w.player.mana < float(moves[i].get("mana", 0.0)):
+					# Too little ink for this move: its rim breaks up, edged red.
+					Ink.dashed_circle(self, p, 17.0, Color(C.danger, 0.8), 2.0)
+				else:
+					draw_arc(p, 17.0, 0, TAU, 32, col, 2.0 if open else 1.0)
 				match i:
 					0:
 						draw_circle(p, 6.5, col)
@@ -93,17 +98,33 @@ class Dock extends Control:
 		draw_rect(r, Color(C.ink, 0.8), false, 1.5)
 		var turning: bool = cs.turning()
 		var k_turn: float = 1.0 - cs.turn_t / maxf(0.01, cs.turn_time()) if turning else 0.0
+		# Can the open page pay for itself? If not, its lines break up and the edge goes red.
+		var cost: float = cs.page_cost()
+		var short: bool = w.player.mana < cost
+		if short:
+			draw_rect(r.grow(2.0), Color(C.danger, 0.55 + 0.2 * sin(w.time * 5.0)), false, 1.5)
 		for side in 2:
 			var x0: float = r.position.x + 8.0 + side * bw / 2.0
 			for ln in 5:
 				var y: float = r.position.y + 12.0 + ln * 8.5
 				var full := 0.15 + 0.85 * clampf(ink_f * 5.0 - ln, 0.0, 1.0)
-				draw_line(Vector2(x0, y), Vector2(x0 + bw / 2.0 - 16.0, y), Color(el, 0.85 * full), 2.0)
+				if short:
+					Ink.dashed_line(self, Vector2(x0, y), Vector2(x0 + bw / 2.0 - 16.0, y), Color(el, 0.85 * full), 2.0, 6.0)
+				else:
+					draw_line(Vector2(x0, y), Vector2(x0 + bw / 2.0 - 16.0, y), Color(el, 0.85 * full), 2.0)
 		if turning:
-			# A page lifting over the spine.
-			var px: float = r.position.x + bw / 2.0 + cos(k_turn * PI) * bw / 2.0
-			draw_line(Vector2(r.position.x + bw / 2.0, r.position.y), Vector2(px, r.position.y + 4.0), C.ink, 1.5)
-			draw_line(Vector2(px, r.position.y + 4.0), Vector2(px, r.end.y - 4.0), C.ink, 1.5)
+			# A page lifting off the right side, arching over the spine and settling on the left.
+			var spine_x: float = r.position.x + bw / 2.0
+			var reach: float = cos(k_turn * PI) * (bw / 2.0 - 2.0)
+			var lift: float = sin(k_turn * PI) * float(GameData.FEEL.page_turn_lift)
+			var top := Vector2(spine_x + reach, r.position.y + 2.0 - lift)
+			var bot := Vector2(spine_x + reach, r.end.y - 2.0 - lift * 0.6)
+			var page := PackedVector2Array([Vector2(spine_x, r.position.y), top, bot, Vector2(spine_x, r.end.y)])
+			draw_colored_polygon(page, Color(C.paper.darkened(0.08 * sin(k_turn * PI)), 1.0))
+			draw_polyline(Ink.outline(page), Color(C.ink, 0.8), 1.2)
+			for ln in 3:
+				var q := 0.25 + ln * 0.22
+				draw_line(Vector2(spine_x, r.position.y).lerp(Vector2(spine_x, r.end.y), q), top.lerp(bot, q), Color(el, 0.35), 1.0)
 		# One dot per page, the open one filled.
 		var n: int = cs.page_count()
 		for i in n:
@@ -142,6 +163,8 @@ var region_lbl: Label
 var numbers: Label
 var region := -1
 var shown := {}     # which parts are faded in already
+var whisper_queue: Array = []   # journal lines waiting their turn (one at a time)
+var whispering := false
 
 
 func _ready() -> void:
@@ -211,6 +234,7 @@ func _ready() -> void:
 	journal_mark.modulate.a = 0.0
 	dock.modulate.a = 0.0
 	_sync_parts(false)
+	UiTheme.fit(self, root)
 
 
 func _full(c: Control, parent: Control = null) -> Control:
@@ -269,6 +293,9 @@ func refresh(dt: float) -> void:
 	var p = w.player
 	var frac: float = p.hp / Game.max_hp()
 	vignette.amount = clampf((0.45 - frac) / 0.45, 0.0, 1.0) * 0.6 if p.dead_t <= 0.0 else 0.0
+	if frac < float(GameData.READABILITY.low_hp_pulse) and p.dead_t <= 0.0:
+		# Near the end, the dark edges beat like a heart.
+		vignette.amount *= 0.8 + 0.2 * pow(absf(sin(w.time * 3.2)), 6.0)
 	vignette.queue_redraw()
 	strain_v.amount = 0.35 * w.casting.strain_t / float(GameData.OVERCAST.strain_time)
 	strain_v.queue_redraw()
@@ -278,11 +305,9 @@ func refresh(dt: float) -> void:
 	journal_mark.queue_redraw()
 	death.visible = p.dead_t > 0.0
 
-	var rd: float = p.position.length()
-	var reg := 0
-	while rd >= GameData.REGIONS[reg].max:
-		reg += 1
-	if reg != region:
+	# The world works out which region you're in (a rule); the HUD only shows the name.
+	var reg: int = w.region
+	if reg != region and reg >= 0:
 		if region >= 0:
 			region_lbl.text = GameData.REGIONS[reg].name
 			var tw := region_lbl.create_tween()
@@ -290,7 +315,6 @@ func refresh(dt: float) -> void:
 			tw.tween_interval(2.5)
 			tw.tween_property(region_lbl, "modulate:a", 0.0, 1.5)
 		region = reg
-		w.on_region(reg)
 
 	numbers.visible = Game.show_numbers()
 	if numbers.visible:
@@ -299,16 +323,29 @@ func refresh(dt: float) -> void:
 			Game.pending_level(w.ch) - int(w.ch.level), Game.xp_into_level(w.ch), Game.xp_next(Game.pending_level(w.ch))]
 
 
-## A new journal line whispers in at the bottom left, then fades.
+## A new journal line whispers in at the bottom left, then fades. Lines that arrive
+## together wait their turn, so none is lost behind another.
 func add_log(t: String) -> void:
 	if not w.ch.get("ui", {}).get("journal", false):
 		return
-	whisper.text = t
+	whisper_queue.append(t)
+	if not whispering:
+		_next_whisper()
+
+
+func _next_whisper() -> void:
+	if whisper_queue.is_empty():
+		whispering = false
+		return
+	whispering = true
+	whisper.text = whisper_queue.pop_front()
 	journal_mark.fresh = 1.0
+	var hold: float = float(GameData.WHISPER_TIME) if whisper_queue.is_empty() else float(GameData.WHISPER_QUEUED)
 	var tw := whisper.create_tween()
-	tw.tween_property(whisper, "modulate:a", 1.0, 0.8)
-	tw.tween_interval(float(GameData.WHISPER_TIME))
-	tw.tween_property(whisper, "modulate:a", 0.0, 1.5)
+	tw.tween_property(whisper, "modulate:a", 1.0, 0.6)
+	tw.tween_interval(hold)
+	tw.tween_property(whisper, "modulate:a", 0.0, 0.9)
+	tw.tween_callback(_next_whisper)
 
 
 ## A new margin note appears beside the book, then fades (read them all in the book, B).

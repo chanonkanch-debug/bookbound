@@ -9,6 +9,7 @@ signal quit_to_rite
 signal go_to_ceremony   # bare-handed, high enough level, and resting in the Hearth
 
 const Ink := preload("res://scripts/util/ink.gd")
+const Fx := preload("res://scripts/util/element_fx.gd")
 const PlayerScript := preload("res://scripts/world/player.gd")
 const EnemyScript := preload("res://scripts/world/enemy.gd")
 const AllyScript := preload("res://scripts/world/ally.gd")
@@ -23,6 +24,7 @@ const DesignerScript := preload("res://scripts/ui/designer_panel.gd")
 const JournalScript := preload("res://scripts/ui/journal_overlay.gd")
 const MapScript := preload("res://scripts/ui/map_overlay.gd")
 const RestScript := preload("res://scripts/ui/rest_overlay.gd")
+const PauseScript := preload("res://scripts/ui/pause_menu.gd")
 
 
 ## A node that draws with a function from World, so ground and effects can sit
@@ -48,6 +50,7 @@ var designer
 var journal_ui
 var map_ui
 var rest_ui
+var pause_ui
 var camera: Camera2D
 var under: Drawer
 var over: Drawer
@@ -68,6 +71,7 @@ var read_held := false      # the read key is down (set from input, or by the ba
 var last_page_held := false # the Last Page key is down
 var bot_aim = null          # a Vector2 set by the balance bot instead of the mouse
 var aim_mouse := false      # true once the mouse has moved; keyboard/gamepad players aim where they face
+var pad_aim := Vector2.ZERO # the last direction the right stick pointed (gamepad aiming)
 var resting := false        # Phase 2: levels are only written when you rest
 var rest_t := 0.0
 var rest_need := 0.0
@@ -107,6 +111,10 @@ var brace_t := 0.0          # Brace: blows from the front are turned aside
 var brace_dir := Vector2.RIGHT
 var decoy_t := 0.0          # Sidestep decoy: monsters chase this instead of you
 var decoy_p := Vector2.ZERO
+var region := -1            # which region you're in (index into REGIONS)
+var hitstop := 0.0          # >0 while the world holds still after a heavy hit (feel only, never in rules)
+var shake_t := 0.0
+var early_lines: Array = [] # discoveries noticed before your first kill wait for it (see journal())
 
 
 func _ready() -> void:
@@ -164,8 +172,12 @@ func _ready() -> void:
 	rest_ui = RestScript.new()
 	rest_ui.w = self
 	add_child(rest_ui)
+	pause_ui = PauseScript.new()
+	pause_ui.w = self
+	add_child(pause_ui)
 	if Game.has_book() and not ch.ui.get("book", false):
 		unlock("book")
+	get_viewport().size_changed.connect(apply_ui_scale)
 
 	for i in int(GameData.MONSTERS.initial):
 		spawn(true)
@@ -178,13 +190,26 @@ func _unhandled_input(event: InputEvent) -> void:
 		aim_mouse = true
 	elif event is InputEventJoypadMotion and absf(event.axis_value) > 0.3:
 		aim_mouse = false
+		if event.axis == JOY_AXIS_LEFT_X or event.axis == JOY_AXIS_LEFT_Y:
+			if Input.get_vector("aim_left", "aim_right", "aim_up", "aim_down").length() < 0.3:
+				pad_aim = Vector2.ZERO   # moving without touching the right stick: aim where you face
 
 
 func _process(delta: float) -> void:
 	var dt := minf(delta, 0.05)
 	if Input.is_action_just_pressed("designer_view"):
 		designer.toggle()
-	if Input.is_action_just_pressed("open_book"):
+	var stick := Input.get_vector("aim_left", "aim_right", "aim_up", "aim_down")
+	if stick.length() > 0.3:
+		pad_aim = stick.normalized()
+		aim_mouse = false
+	if pause_ui.visible:
+		pass   # the pause menu handles its own keys
+	elif Input.is_action_just_pressed("pause"):
+		# Esc / Start closes whatever is open, or opens the pause menu if nothing is.
+		if not close_overlays() and not paused:
+			pause_ui.open()
+	elif Input.is_action_just_pressed("open_book"):
 		if book.visible:
 			book.close()
 		else:
@@ -201,12 +226,7 @@ func _process(delta: float) -> void:
 		elif not paused and ch.ui.get("map", false):
 			map_ui.open()
 	elif Input.is_action_just_pressed("ui_cancel"):
-		if book.visible:
-			book.close()
-		elif journal_ui.visible:
-			journal_ui.close_journal()
-		elif map_ui.visible:
-			map_ui.close_map()
+		close_overlays()
 	designer.tick(dt)
 	if not paused:
 		rest_held = Input.is_action_pressed("rest")
@@ -226,11 +246,36 @@ func _process(delta: float) -> void:
 		if Input.is_action_just_pressed("page_next"):
 			casting.turn_by(1)
 		read_held = Input.is_action_pressed("read")
-		last_page_held = Input.is_action_pressed("cast_4") and Game.has_book()
-		_update(dt)
+		last_page_held = (Input.is_action_pressed("cast_4") or Input.is_action_pressed("last_page_pad")) and Game.has_book()
+		if hitstop > 0.0:
+			hitstop -= delta   # the world holds still for a moment on a heavy blow
+		else:
+			_update(dt)
+	_tick_shake(delta)
 	under.queue_redraw()
 	over.queue_redraw()
 	hud.refresh(dt)
+
+
+## Re-applies the "size of the page" setting to every interface layer.
+func apply_ui_scale() -> void:
+	var UiTheme := preload("res://scripts/ui/ui_theme.gd")
+	UiTheme.fit(hud, hud.root)
+	for layer in [book, journal_ui, map_ui, rest_ui, pause_ui]:
+		UiTheme.fit(layer, layer.ui_root if layer != pause_ui else layer.root)
+
+
+## Closes the open book, journal or map. Returns true if one was open.
+func close_overlays() -> bool:
+	if book.visible:
+		book.close()
+	elif journal_ui.visible:
+		journal_ui.close_journal()
+	elif map_ui.visible:
+		map_ui.close_map()
+	else:
+		return false
+	return true
 
 
 # ================================================================ Simulation
@@ -250,9 +295,12 @@ func _update(dt: float) -> void:
 		_track_movement()
 	_tick_rest(dt)
 	rest_pressed = false
+	_tick_region()
 	_tick_unlocks()
 	_tick_nudges(dt)
 	ally.tick(dt)
+	if Game.has_book():
+		chapter.tick(dt)
 
 	spawn_t -= dt
 	if spawn_t <= 0.0:
@@ -477,16 +525,16 @@ func hit(e, base: float, el: String, src: String, move := "") -> void:
 			"fire":
 				m *= 1.5
 				e.soak = 0.0
-				_combo(e, "Steam x1.5", el)
+				_combo(e, "Steam x1.5", el, src)
 			"earth":
 				e.slow_t = 2.0
 				e.slow_f = 0.4
-				_combo(e, "Mud", el)
+				_combo(e, "Mud", el, src)
 			"wind":
 				for o in enemies:
 					if o != e and o.position.distance_to(e.position) < 90.0:
 						o.soak = 3.0
-				_combo(e, "Spray", el)
+				_combo(e, "Spray", el, src)
 	var dmg := maxi(1, roundi(base * m * randf_range(0.9, 1.1)))
 	e.hp -= dmg
 	e.flash = 0.12
@@ -501,8 +549,10 @@ func hit(e, base: float, el: String, src: String, move := "") -> void:
 	if src == "ally":
 		e.ally_hit = float(GameData.CHAPTER_TUNING.echo_window)
 	# Show, don't tell: the size of the ink splatter says how hard it hit.
-	splats.append({"p": e.position + Vector2(randf_range(-4, 4), randf_range(-4, 4)), "r": 3.0 + sqrt(float(dmg)) * 1.5,
-		"t": 0.0, "life": 1.6, "sd": randf() * 9.0, "a": 0.5 if src == "player" else 0.3})
+	_splat(e.position + Vector2(randf_range(-4, 4), randf_range(-4, 4)), 3.0 + sqrt(float(dmg)) * 1.5,
+		float(GameData.FEEL.splat_life), 0.5 if src == "player" else 0.3)
+	if src == "player" and dmg >= e.max_hp * float(GameData.FEEL.hitstop_frac):
+		feel_hitstop()
 	if Game.show_numbers():
 		add_text(e.position + Vector2(randf_range(-6, 6), -e.r - 4), str(dmg), C.ink_soft if src == "ally" else C.ink, 13, 0.6)
 	if e.hp <= 0:
@@ -601,7 +651,9 @@ func ceremony_ready() -> bool:
 	return not Game.has_book() and int(ch.level) >= GameData.CEREMONY_LEVEL
 
 
-func _combo(e, label: String, el: String) -> void:
+func _combo(e, label: String, el: String, src := "") -> void:
+	if src == "player" and e.position.distance_to(player.position) < 500.0:
+		journal("combo_" + el)
 	if syn_t <= 0.0:
 		ring(e.position, e.r, e.r + 22.0, 0.45, C[el], 2.5)
 		if Game.show_numbers():
@@ -616,7 +668,9 @@ func kill(e, src: String) -> void:
 			signal_lean("streak_kill")
 		if not e.bit_player:
 			signal_lean("clean_kill")
-	splats.append({"p": e.position, "r": e.r * 1.5, "t": 0.0, "life": 4.0, "sd": randf() * 9.0, "a": 0.22})
+	_splat(e.position, e.r * 1.5, float(GameData.FEEL.kill_splat_life), 0.25)
+	if e.tier >= 2:
+		feel_shake(1.0)
 	if src == "player":
 		unlock("journal")
 		journal("first_kill")
@@ -672,6 +726,10 @@ func hurt(d: float) -> void:
 		d *= 1.0 - float(GameData.STANCES.planted_guard)
 	player.hp -= d
 	player.hurt_t = 0.25
+	if d >= float(GameData.FEEL.hitstop_hurt):
+		feel_hitstop()
+	if d >= float(GameData.FEEL.shake_hurt):
+		feel_shake(1.0)
 	casting.on_hurt()
 	if resting:
 		_break_rest()
@@ -688,6 +746,7 @@ func _die() -> void:
 	ch.xp = int(ch.xp * 0.9)
 	streak = 0
 	player.low = false
+	casting.cancel()
 	casting.reading = false
 	resting = false
 	unlock("journal")
@@ -722,6 +781,8 @@ func aim_point() -> Vector2:
 		return bot_aim
 	if aim_mouse:
 		return get_global_mouse_position()
+	if pad_aim != Vector2.ZERO:
+		return player.position + pad_aim * 220.0
 	return player.position + player.facing * 220.0
 
 
@@ -927,7 +988,7 @@ func perform(st_in: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 
 
 func _add_zone(p: Vector2, r: float, life: float, tick: float, dmg: float, st: Dictionary, src: String) -> Dictionary:
-	var z := {"p": p, "r": r, "life": life, "t": 0.0, "tick": tick, "tt": 0.0, "dmg": dmg, "st": st, "el": st.el, "src": src}
+	var z := {"p": p, "r": r, "life": life, "t": 0.0, "tick": tick, "tt": 0.0, "dmg": dmg, "st": st, "el": st.el, "src": src, "sd": randf() * TAU}
 	zones.append(z)
 	ring(p, 4, r, 0.35, C[st.el], 2)
 	return z
@@ -1110,6 +1171,8 @@ func on_cast(slot: int, st: Dictionary, mult: float) -> void:
 		perform(st, aim, "player", 1.0)
 		ring(player.position, 10, 220, 0.8, C.gilt, 4)
 		last_page_cd = 12.0
+		feel_shake(1.0)
+		feel_hitstop()
 		return
 	var still: bool = player.still > 0.4
 	perform(st, aim, "player", mult)
@@ -1185,6 +1248,7 @@ func spend_ink(i: int) -> bool:
 	ch.ink -= 1
 	if int(s.lvl / 4.0) > tier_before:
 		ring(player.position, 10, 90, 0.7, C[ch.el], 3)
+		journal("first_evolve")
 	hud.rebuild_spells()
 	Game.save_game()
 	return true
@@ -1196,6 +1260,8 @@ func spend_ink(i: int) -> bool:
 func can_rest() -> bool:
 	if player.dead_t > 0.0:
 		return false
+	if player.position.length() < GameData.TOWN_RADIUS:
+		return true   # nothing can follow you into the Hearth, so nothing can wake you there
 	for e in enemies:
 		if not e.dead and e.aggro and e.position.distance_to(player.position) < float(GameData.REST.break_range):
 			return false
@@ -1244,6 +1310,8 @@ func _break_rest() -> void:
 ## A finished rest: pending levels are written, then (with a book) you may write
 ## ink into your pages. The first rest in the Hearth at the ceremony level opens the ceremony.
 func finish_rest() -> void:
+	if rest_ui.visible and not auto_rest_ui:
+		return   # the end of the last rest (or the ceremony's call) is still on screen
 	resting = false
 	var in_hearth: bool = player.position.length() < GameData.TOWN_RADIUS
 	var hp_frac: float = player.hp / Game.max_hp()
@@ -1302,9 +1370,22 @@ func journal(id: String, text := "") -> void:
 	var t: String = text if text != "" else String(GameData.JOURNAL.get(id, ""))
 	if t == "":
 		return
+	# The journal starts with your own first kill. Small discoveries noticed before it
+	# (a hand secret, something Mira showed you) wait and are written right after it.
+	if not ids.has("first_kill") and id.get_slice("_", 0) in ["hand", "aff", "terrain", "combo"]:
+		for q in early_lines:
+			if q[0] == id:
+				return
+		early_lines.append([id, t])
+		return
 	ids[id] = true
 	ch.journal.append(t)
 	hud.add_log(t)
+	if id == "first_kill":
+		var wait := early_lines
+		early_lines = []
+		for q in wait:
+			journal(String(q[0]), String(q[1]))
 
 
 ## Shows one part of the interface for good (it fades in, see hud.gd).
@@ -1337,7 +1418,19 @@ func _tick_unlocks() -> void:
 			journal("page_turn")
 
 
-## Called by the HUD when you cross into another region.
+func _tick_region() -> void:
+	if player.dead_t > 0.0:
+		return
+	var rd: float = player.position.length()
+	var reg := 0
+	while rd >= GameData.REGIONS[reg].max:
+		reg += 1
+	if reg != region:
+		region = reg
+		on_region(reg)
+
+
+## You crossed into another region.
 func on_region(reg: int) -> void:
 	if reg == 0:
 		if ch.left_hearth:
@@ -1363,15 +1456,18 @@ func _tick_nudges(dt: float) -> void:
 		"attack": not o.get("attack", false) and ch.ui.get("hands", false) and nearest(player.position, 220.0) != null,
 		"page": not o.get("page", false) and casting.page_count() > 1 and (Game.has_book() or ch.ui.get("hands", false)),
 		"rest": not ch.rested and player.hp / Game.max_hp() < 0.6 and can_rest(),
+		"rest_fire": not ch.rested and near_campfire() and Game.pending_level() > int(ch.level) and can_rest(),
 		"book": Game.has_book() and not o.get("book", false),
 		"journal": ch.ui.get("journal", false) and not o.get("journal", false),
 	}
 	for id in conds:
-		if not conds[id] or ch.nudged.get(id, false):
+		if not conds[id] or ch.nudged.get(id, false) or (id == "rest_fire" and ch.nudged.get("rest", false)):
 			continue
 		nudge_clock[id] = float(nudge_clock.get(id, 0.0)) + dt
 		if nudge_clock[id] >= float(GameData.NUDGES[id].after) and nudge_t <= 0.0:
 			ch.nudged[id] = true
+			if id == "rest_fire":
+				ch.nudged.rest = true   # the same R glyph; one is enough
 			nudge_id = id
 			nudge_t = float(GameData.NUDGE_SHOW)
 			Game.save_game()
@@ -1385,6 +1481,7 @@ func open_book() -> void:
 	if not Game.has_book():
 		return
 	ch.opened.book = true
+	casting.cancel()   # opening the book closes the page you were reading, ink back in full
 	var awakened_now: bool = chapter.try_awaken()
 	paused = true
 	pointer_down = false
@@ -1405,8 +1502,20 @@ func all_margins() -> Array:
 	return ch.aspect.margins + ch.disc.margins
 
 
+## An ink splatter that lingers on the ground. The oldest go first past FEEL.splat_max.
+func _splat(p: Vector2, r: float, life: float, a: float) -> void:
+	splats.append({"p": p, "r": r, "t": 0.0, "life": life, "sd": randf() * 9.0, "a": a})
+	if splats.size() > int(GameData.FEEL.splat_max):
+		splats.pop_front()
+
+
 func ring(p: Vector2, r0: float, r1: float, life: float, col: Color, w: float) -> void:
-	rings.append({"p": p, "r0": r0, "r1": r1, "t": 0.0, "life": life, "col": col, "w": w})
+	# Rings in an element's colour are drawn in that element's shape (see element_fx.gd).
+	var el := ""
+	for k in Game.ELS:
+		if C[k] == col:
+			el = k
+	rings.append({"p": p, "r0": r0, "r1": r1, "t": 0.0, "life": life, "col": col, "w": w, "el": el})
 
 
 func add_text(p: Vector2, s: String, col: Color, size: int, life: float) -> void:
@@ -1426,6 +1535,29 @@ func dev_complete_trigger() -> void:
 	var a: Dictionary = ch.aspect
 	while not a.awakened and a.progress < a.need:
 		chapter.progress()
+	chapter.flush_hints()
+
+
+# ================================================================ Feel (Phase 1 of The Unwritten)
+# Both only affect what you see. Tests and the balance bots call _update directly, so
+# neither changes any result.
+
+func feel_hitstop() -> void:
+	if Game.settings.get("hitstop", true):
+		hitstop = maxf(hitstop, float(GameData.FEEL.hitstop_time))
+
+
+func feel_shake(k: float) -> void:
+	if Game.settings.get("shake", false):
+		shake_t = maxf(shake_t, float(GameData.FEEL.shake_time) * clampf(k, 0.0, 1.0))
+
+
+func _tick_shake(delta: float) -> void:
+	shake_t = maxf(0.0, shake_t - delta)
+	if camera == null:
+		return
+	var a: float = float(GameData.FEEL.shake_amount) * shake_t / maxf(0.01, float(GameData.FEEL.shake_time))
+	camera.offset = Vector2(randf_range(-a, a), randf_range(-a, a)) if a > 0.05 else Vector2.ZERO
 
 
 # ================================================================ Drawing
@@ -1457,6 +1589,7 @@ func _draw_under(d: Node2D) -> void:
 	d.draw_arc(Vector2.ZERO, town, 0, TAU, 96, Color(C.gilt, 0.8), 2.0)
 	Ink.text_c(d, Vector2(0, -town + 32), "The Hearth", 20, Color(C.gilt, 0.85))
 	d.draw_colored_polygon(Ink.blob(Vector2.ZERO, 9.0, 1.0, time * 1.5), C.fire)
+	_draw_fire_call(d, Vector2.ZERO)
 
 	for pt in terrain_patches_for_draw():
 		_draw_patch(d, pt)
@@ -1471,11 +1604,13 @@ func _draw_under(d: Node2D) -> void:
 		var g := maxf(0.0, sin(time * 1.3))
 		d.draw_circle(mp + Vector2(4, -3), 2.0 * g, Color(C.gilt, g))
 	for s in splats:
-		d.draw_colored_polygon(Ink.blob(s.p, s.r, s.sd, 0.0), Color(C.ink, float(s.get("a", 0.22)) * (1.0 - s.t / s.life)))
+		# Stays dark for a while, then fades slowly (FEEL.splat_hold).
+		var hold: float = float(GameData.FEEL.splat_hold)
+		var fade: float = clampf((s.t / s.life - hold) / (1.0 - hold), 0.0, 1.0)
+		d.draw_colored_polygon(Ink.blob(s.p, s.r, s.sd, 0.0), Color(C.ink, float(s.get("a", 0.22)) * (1.0 - fade * fade)))
 	for z in zones:
-		var f: float = minf(1.0, (1.0 - z.t / z.life) * 3.0)
-		d.draw_circle(z.p, z.r, Color(C[z.el], 0.16 * f))
-		Ink.dashed_circle(d, z.p, z.r, Color(C[z.el], 0.6 * f), 1.5, time * 0.5)
+		var f: float = minf(1.0, minf((1.0 - z.t / z.life) * 3.0, z.t * 4.0 + 0.3))
+		Fx.zone(d, String(z.el), z.p, z.r, time, f, float(z.get("sd", 0.0)))
 	if decoy_t > 0.0:
 		# The smear of ink a grown Sidestep leaves behind.
 		var k: float = decoy_t / float(GameData.HAND_GROWTH.sidestep.decoy_time)
@@ -1486,9 +1621,7 @@ func _draw_under(d: Node2D) -> void:
 
 func _draw_over(d: Node2D) -> void:
 	for pj in projectiles:
-		var col: Color = C[pj.el]
-		d.draw_line(pj.p, pj.p - pj.v * 0.04, Color(col, 0.35), 3.0)
-		d.draw_circle(pj.p, 4.0 if pj.src == "ally" else 5.0, col)
+		Fx.bolt(d, String(pj.el), pj.p, pj.v, time, pj.src == "ally")
 	for c in chains:
 		var al := minf(1.0, c.t * 6.0)
 		if c.wide:
@@ -1497,7 +1630,10 @@ func _draw_over(d: Node2D) -> void:
 			d.draw_polyline(Ink.jag(c.a, c.b), Color(c.col, al), 2.5)
 	for r in rings:
 		var k: float = r.t / r.life
-		d.draw_arc(r.p, lerpf(r.r0, r.r1, k), 0, TAU, 48, Color(r.col, 1.0 - k), r.w)
+		if String(r.el) != "":
+			Fx.ring(d, String(r.el), r.p, lerpf(r.r0, r.r1, k), k, r.w, time)
+		else:
+			d.draw_arc(r.p, lerpf(r.r0, r.r1, k), 0, TAU, 48, Color(r.col, 1.0 - k), r.w)
 	if awaken_fx > 0.0:
 		var k := 1.0 - awaken_fx / 2.5
 		for i in 3:
@@ -1547,7 +1683,21 @@ func _draw_patch(d: Node2D, pt: Dictionary) -> void:
 				d.draw_line(p + Vector2(x - 12, y), p + Vector2(x + 12, y - 2), Color(C.wind, 0.3), 1.2)
 
 
+## When levels are waiting to be written, fires burn a little brighter and throw sparks,
+## as if they were calling you to sit down (no text, no glyph).
+func _draw_fire_call(d: Node2D, f: Vector2) -> void:
+	if Game.pending_level() <= int(ch.level) or player.position.distance_to(f) > float(GameData.FEEL.fire_call_range):
+		return
+	var pulse := 0.5 + 0.5 * sin(time * 2.2)
+	d.draw_circle(f, 20.0 + 6.0 * pulse, Color(C.gilt, 0.10 + 0.06 * pulse))
+	for k in 5:
+		var rise := fmod(time * 18.0 + k * 9.0, 40.0)
+		var sp: Vector2 = f + Vector2(sin(time * 1.7 + k * 2.3) * 7.0, -8.0 - rise)
+		d.draw_circle(sp, 1.6, Color(C.gilt, 0.8 * (1.0 - rise / 40.0)))
+
+
 func _draw_campfire(d: Node2D, f: Vector2) -> void:
+	_draw_fire_call(d, f)
 	for k in 6:
 		d.draw_circle(f + Vector2.from_angle(k * TAU / 6.0) * 13.0, 3.5, Color(C.ink_soft, 0.7))
 	d.draw_colored_polygon(Ink.blob(f, 7.0, 2.0, time * 2.0), C.fire)
@@ -1585,27 +1735,45 @@ const GLYPHS := "abcdefghijklmnopqrstuvwxyz"
 
 
 ## Reading shows on the character, never as a bar: letters lift off the book and a
-## ring fills around you. Past the read time the ring turns gold and grows (overcharge).
+## ring fills around you. Past the read time the ring closes with a flash and turns gold
+## as it overcharges. A fizzle drips grey letters; a broken read snaps the ring apart.
 func _draw_reading(d: Node2D) -> void:
 	if player.dead_t > 0.0:
 		return
+	var R: Dictionary = GameData.READABILITY
 	var p: Vector2 = player.position
 	var book_p: Vector2 = p + Vector2(15, 0)
 	var col: Color = C[ch.el] if Game.has_book() else C.ink
 	if casting.fizzle_fx > 0.0:
 		var f: float = casting.fizzle_fx / 0.5
-		for i in 7:
-			var fp: Vector2 = book_p + Vector2(sin(i * 2.1) * 10.0, (1.0 - f) * 26.0 + i * 2.0)
-			Ink.text_c(d, fp, GLYPHS[(i * 7) % 26], 10, Color(C.ink_soft, f * 0.7))
+		if casting.last_result == "broken":
+			# The ring snaps: two halves fly apart, and a red slash crosses the book.
+			var gap: float = (1.0 - f) * 14.0
+			d.draw_arc(p + Vector2(-gap, 0), 22.0, PI * 0.55, PI * 1.45, 16, Color(col, f * 0.8), float(R.read_ring_w))
+			d.draw_arc(p + Vector2(gap, 0), 22.0, -PI * 0.45, PI * 0.45, 16, Color(col, f * 0.8), float(R.read_ring_w))
+			d.draw_line(book_p + Vector2(-7, -9), book_p + Vector2(7, 9), Color(C.danger, f), 2.5)
+		else:
+			for i in 7:
+				var fp: Vector2 = book_p + Vector2(sin(i * 2.1) * 10.0, (1.0 - f) * 26.0 + i * 2.0)
+				Ink.text_c(d, fp, GLYPHS[(i * 7) % 26], 10, Color(C.ink_soft, f * 0.7))
 	if not casting.reading:
 		return
 	var k: float = casting.progress()
 	var oc: float = casting.overcharge()
-	d.draw_arc(p, 22.0, -PI / 2.0, -PI / 2.0 + TAU * k, 40, Color(col, 0.35 + 0.4 * k), 2.5)
+	var rw: float = float(R.read_ring_w)
+	# A faint full circle shows where the ring will close, so how far along it is reads at a glance.
+	d.draw_arc(p, 22.0, 0, TAU, 40, Color(col, 0.15), rw)
+	d.draw_arc(p, 22.0, -PI / 2.0, -PI / 2.0 + TAU * k, 40, Color(col, 0.5 + 0.4 * k), rw)
 	if k >= 1.0:
-		d.draw_arc(p, 22.0, 0, TAU, 40, Color(col, 0.8), 2.5)
+		d.draw_arc(p, 22.0, 0, TAU, 40, Color(col, 0.9), rw)
+		if casting.ready_fx > 0.0:
+			var fk: float = casting.ready_fx / float(R.ready_flash)
+			d.draw_arc(p, 22.0 + 10.0 * (1.0 - fk), 0, TAU, 40, Color(C.paper.lerp(col, 0.3), fk), 2.0)
 		if oc > 0.0:
-			d.draw_arc(p, 27.0 + 4.0 * oc, -PI / 2.0, -PI / 2.0 + TAU * oc, 40, Color(C.gilt, 0.5 + 0.5 * oc), 1.5 + 2.0 * oc)
+			d.draw_arc(p, 28.0 + 4.0 * oc, -PI / 2.0, -PI / 2.0 + TAU * oc, 40, Color(C.gilt, 0.6 + 0.4 * oc), 2.0 + 2.5 * oc)
+			if oc >= 1.0:
+				# Fully charged: a second gold ring that breathes.
+				d.draw_arc(p, 37.0 + 1.5 * sin(time * 8.0), 0, TAU, 40, Color(C.gilt, 0.7), 1.5)
 	var n := int(2 + 8 * k + 8 * oc)
 	for i in n:
 		var rise := fmod(time * (26.0 + 10.0 * oc) + i * 11.0, 34.0)
