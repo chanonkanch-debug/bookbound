@@ -44,6 +44,7 @@ var C: Dictionary = GameData.COLORS
 var root: Control
 var region_lbl: Label
 var region_sub: Label
+var ceremony_lbl: Label
 var castbar: HBoxContainer
 var cast_btns: Array = []
 var last_page_btn: CastButton
@@ -104,6 +105,9 @@ func _ready() -> void:
 	region_sub = _label("", 13, C.ink_soft)
 	lv.add_child(region_lbl)
 	lv.add_child(region_sub)
+	ceremony_lbl = _label("", 16, C.gilt)
+	ceremony_lbl.visible = false
+	lv.add_child(ceremony_lbl)
 	var spacer := _ignore(Control.new())
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	lv.add_child(spacer)
@@ -130,9 +134,12 @@ func _ready() -> void:
 	name_row.add_child(name_lbl)
 	name_row.add_child(lvl_lbl)
 	pv.add_child(name_row)
-	var t: Dictionary = GameData.THICKNESS[w.ch.thick]
-	var e: Dictionary = GameData.ELEMENTS[w.ch.el]
-	pv.add_child(_label("%s %s book · %d pages · %s" % [t.name, e.name, w.ch.pages, e.verb], 13, C.ink_soft, HORIZONTAL_ALIGNMENT_LEFT, true))
+	if Game.has_book():
+		var t: Dictionary = GameData.THICKNESS[w.ch.thick]
+		var e: Dictionary = GameData.ELEMENTS[w.ch.el]
+		pv.add_child(_label("%s %s book · %d pages · %s" % [t.name, e.name, w.ch.pages, e.verb], 13, C.ink_soft, HORIZONTAL_ALIGNMENT_LEFT, true))
+	else:
+		pv.add_child(_label("No book yet · bare hands · Book Ceremony at Lv %d" % GameData.CEREMONY_LEVEL, 13, C.ink_soft, HORIZONTAL_ALIGNMENT_LEFT, true))
 	for b in [["hp", "HP", C.danger], ["mp", "Mana", C.water], ["xp", "XP", C.gilt]]:
 		pv.add_child(_bar_row(b[0], b[1], b[2]))
 	status_lbl = _label("", 12, C.ink_soft)
@@ -140,7 +147,7 @@ func _ready() -> void:
 
 	pv.add_child(HSeparator.new())
 	var pages_row := HBoxContainer.new()
-	var ph := _label("Pages", 15, C.ink_soft)
+	var ph := _label("Pages" if Game.has_book() else "Bare hands", 15, C.ink_soft)
 	ph.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	ink_lbl = _label("", 14, C.ink)
 	pages_row.add_child(ph)
@@ -239,6 +246,9 @@ func rebuild_spells() -> void:
 		c.queue_free()
 	var ch: Dictionary = w.ch
 	ink_lbl.text = "Ink %d" % ch.ink
+	if not Game.has_book():
+		_rebuild_bare_hands()
+		return
 	var mx := Game.max_spell_level()
 	for i in ch.spells.size():
 		var s: Dictionary = ch.spells[i]
@@ -266,14 +276,37 @@ func rebuild_spells() -> void:
 	_rebuild_castbar()
 
 
+## Before the ceremony: list the bare-hands moves. Ink is saved for later.
+func _rebuild_bare_hands() -> void:
+	ink_lbl.text = "Ink %d (saved)" % w.ch.ink
+	for i in GameData.BARE_HANDS.size():
+		var st: Dictionary = Game.bare_stats(i)
+		var col := VBoxContainer.new()
+		col.add_child(_label("%d · %s" % [i + 1, st.name], 16, C.ink))
+		var cost := "free" if float(st.mana) <= 0.0 else "%d mana" % roundi(st.mana)
+		col.add_child(_label("%s · %d dmg · %s" % [st.get("label", GameData.KIND_LABEL[st.kind]), roundi(st.dmg), cost], 12, C.ink_soft, HORIZONTAL_ALIGNMENT_LEFT, true))
+		spell_box.add_child(col)
+	spell_box.add_child(_label("Your ink waits for the book you'll receive at the ceremony.", 12, C.ink_soft, HORIZONTAL_ALIGNMENT_LEFT, true))
+	_rebuild_castbar()
+
+
+## Stats for cast button i: a spell once you have a book, a bare-hands move before.
+func _slot_stats(i: int) -> Dictionary:
+	if Game.has_book():
+		return Game.spell_stats(w.ch.spells[i])
+	return Game.bare_stats(i)
+
+
 func _rebuild_castbar() -> void:
 	for c in castbar.get_children():
 		c.queue_free()
 	cast_btns.clear()
-	var col: Color = C[w.ch.el]
-	for i in w.ch.spells.size():
+	var bound := Game.has_book()
+	var col: Color = C[w.ch.el] if bound else C.none
+	var n: int = w.ch.spells.size() if bound else GameData.BARE_HANDS.size()
+	for i in n:
 		var b := CastButton.new()
-		b.text = "%d   %s" % [i + 1, Game.spell_name(w.ch.spells[i])]
+		b.text = "%d   %s" % [i + 1, Game.spell_name(w.ch.spells[i]) if bound else GameData.BARE_HANDS[i].name]
 		b.col = col
 		b.focus_mode = Control.FOCUS_NONE
 		b.add_theme_stylebox_override("normal", UiTheme.box(Color(C.paper, 0.85), col))
@@ -293,6 +326,7 @@ func _rebuild_castbar() -> void:
 	book_btn.focus_mode = Control.FOCUS_NONE
 	book_btn.add_theme_stylebox_override("normal", UiTheme.box(Color(C.paper, 0.85), C.ink))
 	book_btn.pressed.connect(w.open_book)
+	book_btn.visible = bound
 	castbar.add_child(book_btn)
 
 
@@ -318,7 +352,7 @@ func refresh(dt: float) -> void:
 	var free_cast: bool = ch.aspect.awakened and ch.aspect.id == "stillness" and p.still > 0.4
 	for i in cast_btns.size():
 		var b: CastButton = cast_btns[i]
-		var st: Dictionary = Game.spell_stats(ch.spells[i])
+		var st: Dictionary = _slot_stats(i)
 		b.cd = maxf(0.0, w.cds[i] / st.cd)
 		b.modulate.a = 1.0 if free_cast or p.mana >= st.mana else 0.55
 		b.queue_redraw()
@@ -337,6 +371,9 @@ func refresh(dt: float) -> void:
 			add_log("Entered %s." % GameData.REGIONS[reg].name)
 		region = reg
 	death.visible = p.dead_t > 0.0
+	ceremony_lbl.visible = w.ceremony_ready()
+	if ceremony_lbl.visible:
+		ceremony_lbl.text = "Your Book Ceremony is ready. Return to the Hearth."
 
 	dev_t -= dt
 	if dev_box.visible and dev_t <= 0.0:
@@ -408,6 +445,9 @@ func toggle_dev() -> void:
 
 
 func _refresh_dev() -> void:
+	if not Game.has_book():
+		_refresh_dev_lean()
+		return
 	var a: Dictionary = w.ch.aspect
 	var as_: Dictionary = GameData.ASPECTS[a.id]
 	var met: bool = w.chapter.act_met()
@@ -419,3 +459,19 @@ func _refresh_dev() -> void:
 		soft, w.chapter.act_text(),
 		soft, "yes" if met else "no",
 	]
+
+
+## Designer view before the ceremony: leaning points and the current book odds.
+func _refresh_dev_lean() -> void:
+	var soft: String = C.ink_soft.to_html(false)
+	var lean: Dictionary = w.ch.get("lean", {})
+	var weights := Game.element_weights(w.ch.bg, lean)
+	var total := 0.0
+	for k in weights:
+		total += weights[k]
+	var lines: Array = []
+	for k in weights:
+		lines.append("[color=#%s]%s[/color]  %d pts · %d%%" % [
+			C[k].to_html(false), GameData.ELEMENTS[k].name, roundi(float(lean.get(k, 0.0))), roundi(100.0 * weights[k] / total)])
+	dev_lbl.text = "[color=#%s]SPOILERS. Players never see these numbers.[/color]\n\n[b]Leaning[/b] (points · book chance now)\n%s\n\n[color=#%s]Ceremony at Lv %d. Rules and strength are in LEAN in game_data.gd.[/color]" % [
+		soft, "\n".join(lines), soft, GameData.CEREMONY_LEVEL]

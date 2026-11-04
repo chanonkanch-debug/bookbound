@@ -79,7 +79,8 @@ func _draw() -> void:
 	if dead_t > 0.0:
 		return
 	var C: Dictionary = GameData.COLORS
-	var el_c: Color = C[w.ch.el]
+	var bound := Game.has_book()
+	var el_c: Color = C[w.ch.el] if bound else C.none
 	if w.hint_flash > 0.0:
 		var k: float = w.hint_flash / 1.6
 		var pulse := 0.6 + 0.4 * sin(w.time * 14.0)
@@ -88,6 +89,9 @@ func _draw() -> void:
 		draw_arc(Vector2.ZERO, r + 5.0, 0, TAU, 32, Color(C.fire, 0.25 + heat * 0.1), float(heat))
 	draw_circle(Vector2.ZERO, r, C.danger if hurt_t > 0.0 else el_c)
 	draw_arc(Vector2.ZERO, r, 0, TAU, 32, C.ink, 2.5)
-	draw_rect(Rect2(11, -6, 9, 12), C.ink)       # your book
-	draw_rect(Rect2(11, -6, 2, 12), el_c)
+	if bound:
+		draw_rect(Rect2(11, -6, 9, 12), C.ink)       # your book
+		draw_rect(Rect2(11, -6, 2, 12), el_c)
+	else:
+		draw_circle(facing * (r + 5.0), 4.0, C.ink)  # a bare fist
 	Ink.text_c(self, Vector2(0, r + 16), w.ch.name, 13, C.ink)

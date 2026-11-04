@@ -6,6 +6,7 @@ extends Node2D
 ## this is the code that moves to the host/server.
 
 signal quit_to_rite
+signal go_to_ceremony   # bare-handed, high enough level, and standing in the Hearth
 
 const Ink := preload("res://scripts/util/ink.gd")
 const PlayerScript := preload("res://scripts/world/player.gd")
@@ -58,6 +59,8 @@ var spawn_t := 0.0
 var save_t := 5.0
 var paused := false
 var pointer_down := false
+var last_hit_id := 0        # for the leaning rules before the ceremony
+var last_hit_t := -99.0
 
 
 func _ready() -> void:
@@ -104,6 +107,11 @@ func _ready() -> void:
 	for i in 10:
 		spawn(true)
 	log_msg("%s steps out of the Hearth. Mira (%s) follows." % [ch.name, GameData.ELEMENTS[ally.el].name])
+	if not Game.has_book():
+		if ceremony_ready():
+			log_msg("Your Book Ceremony is ready. Return to the Hearth.")
+		else:
+			log_msg("You have no book yet. Fight with your bare hands until Lv %d." % GameData.CEREMONY_LEVEL)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -143,6 +151,11 @@ func _update(dt: float) -> void:
 		pointer_down = false
 
 	player.tick(dt)
+	if ceremony_ready() and player.dead_t <= 0.0 and player.position.length() < GameData.TOWN_RADIUS:
+		Game.save_game()
+		go_to_ceremony.emit()
+		set_process(false)
+		return
 	ally.tick(dt)
 
 	spawn_t -= dt
@@ -244,7 +257,7 @@ func _update_projectiles(dt: float) -> void:
 			if e.dead or pj.hit.has(e.get_instance_id()):
 				continue
 			if pj.p.distance_to(e.position) < e.r + 5.0:
-				hit(e, pj.dmg, pj.el, pj.src)
+				hit(e, pj.dmg, pj.el, pj.src, String(pj.st.get("move", "")))
 				pj.hit.append(e.get_instance_id())
 				var st: Dictionary = pj.st
 				if st.get("push", 0.0) > 0.0:
@@ -303,9 +316,12 @@ func nearest(from: Vector2, max_d: float, exclude: Array = []):
 
 
 ## Damage one enemy. Element combos (Soaked + X) are applied here.
-func hit(e, base: float, el: String, src: String) -> void:
+## `move` is set for bare-hands moves so the hit can count toward a leaning.
+func hit(e, base: float, el: String, src: String, move := "") -> void:
 	if e.dead:
 		return
+	if move != "" and src == "player":
+		_track_lean(e, move)
 	var m := 1.0
 	var a: Dictionary = ch.aspect
 	if src == "player":
@@ -344,6 +360,33 @@ func hit(e, base: float, el: String, src: String) -> void:
 		kill(e, src)
 
 
+## Before the ceremony: how you fight quietly leans your future book.
+## The rules and numbers are in GameData.LEAN.
+func lean(el: String, amount: float) -> void:
+	if Game.has_book() or not ch.has("lean"):
+		return
+	ch.lean[el] = float(ch.lean.get(el, 0.0)) + amount
+
+
+func _track_lean(e, move: String) -> void:
+	var L: Dictionary = GameData.LEAN
+	var id: int = e.get_instance_id()
+	if player.still >= float(L.planted_time):
+		lean("earth", 1.0)
+	match move:
+		"jab":
+			if time - last_hit_t <= float(L.combo_window):
+				lean("fire" if id == last_hit_id else "lightning", 1.0)
+			last_hit_id = id
+			last_hit_t = time
+		"shove":
+			lean("water", 1.0)
+
+
+func ceremony_ready() -> bool:
+	return not Game.has_book() and int(ch.level) >= GameData.CEREMONY_LEVEL
+
+
 func _combo(e, label: String, el: String) -> void:
 	if syn_t <= 0.0:
 		add_text(e.position + Vector2(0, -e.r - 18), label, C[el], 15, 1.1)
@@ -369,7 +412,16 @@ func gain_xp(n: int) -> void:
 		player.mana = Game.max_mana()
 		ring(player.position, 10, 120, 0.9, C.gilt, 3)
 		add_text(player.position + Vector2(0, -30), "Level %d" % ch.level, C.gilt, 20, 1.6)
-		log_msg("Reached Lv %d. +%d ink to write into your spells." % [ch.level, GameData.INK_PER_LEVEL])
+		if Game.has_book():
+			log_msg("Reached Lv %d. +%d ink to write into your spells." % [ch.level, GameData.INK_PER_LEVEL])
+		else:
+			log_msg("Reached Lv %d. +%d ink, saved for the book you don't have yet." % [ch.level, GameData.INK_PER_LEVEL])
+			var top := Game.top_lean()
+			if top != "":
+				log_msg(GameData.LEAN_HINTS[top])
+			if int(ch.level) == GameData.CEREMONY_LEVEL:
+				log_msg("Your Book Ceremony is ready. Return to the Hearth.")
+				add_text(player.position + Vector2(0, -52), "Return to the Hearth", C.gilt, 16, 2.5)
 		hud.rebuild_spells()
 		Game.save_game()
 
@@ -414,7 +466,7 @@ func perform(st: Dictionary, target, src: String, mult: float) -> bool:
 			for k in n:
 				var ang := dir.angle() + (k - (n - 1) / 2.0) * 0.17
 				projectiles.append({
-					"p": origin, "v": Vector2.from_angle(ang) * float(st.speed), "life": 1.1,
+					"p": origin, "v": Vector2.from_angle(ang) * float(st.speed), "life": float(st.get("life", 1.1)),
 					"dmg": dmg, "el": st.el, "src": src, "pierce": int(st.get("pierce", 0)),
 					"hit": [], "st": st, "explode": tier >= 3,
 				})
@@ -441,7 +493,7 @@ func perform(st: Dictionary, target, src: String, mult: float) -> bool:
 				ring(c, 8, r, 0.4, col, 3)
 				for e in enemies:
 					if not e.dead and c.distance_to(e.position) < r + e.r:
-						hit(e, dmg, st.el, src)
+						hit(e, dmg, st.el, src, String(st.get("move", "")))
 						_push_soak_slow(e, st, c)
 			pulse.call()
 			if tier >= 3:
@@ -466,7 +518,7 @@ func perform(st: Dictionary, target, src: String, mult: float) -> bool:
 					continue
 				var closest := Geometry2D.get_closest_point_to_segment(e.position, origin, end_p)
 				if e.position.distance_to(closest) < width + e.r:
-					hit(e, dmg, st.el, src)
+					hit(e, dmg, st.el, src, String(st.get("move", "")))
 					_push_soak_slow(e, {"push": 80.0}, closest)
 			chains.append({"a": origin, "b": end_p, "t": 0.25, "col": col, "wide": true})
 			o.position = end_p
@@ -475,8 +527,12 @@ func perform(st: Dictionary, target, src: String, mult: float) -> bool:
 
 
 ## Cast spell slot i (0–2), or 3 for the hidden Last Page spell.
+## Before the ceremony, slots 0–2 are the bare-hands moves.
 func cast(i: int) -> void:
 	if paused or player.dead_t > 0.0:
+		return
+	if not Game.has_book():
+		_cast_bare(i)
 		return
 	var a: Dictionary = ch.aspect
 	if i == 3:
@@ -510,6 +566,26 @@ func cast(i: int) -> void:
 	chapter.on_cast(still)
 
 
+func _cast_bare(i: int) -> void:
+	if i >= GameData.BARE_HANDS.size() or cds[i] > 0.0:
+		return
+	var st: Dictionary = Game.bare_stats(i)
+	if player.mana < float(st.mana):
+		if mana_warn_t <= 0.0:
+			add_text(player.position + Vector2(0, -24), "Out of mana", C.water, 13, 0.8)
+			mana_warn_t = 0.8
+		return
+	var target = nearest(player.position, 460.0)
+	if st.move == "sidestep" and nearest(player.position, float(GameData.LEAN.dash_near)) != null:
+		lean("wind", 1.0)
+	if st.move == "sidestep":
+		player.still = 0.0   # a dash is movement, so it never counts as standing your ground
+	if not perform(st, target, "player", 1.0):
+		return
+	player.mana -= float(st.mana)
+	cds[i] = st.cd
+
+
 func last_page_ready() -> bool:
 	var a: Dictionary = ch.aspect
 	return a.awakened and a.id == "lastpage" and player.dead_t <= 0.0 and player.hp / Game.max_hp() < 0.3
@@ -533,6 +609,12 @@ func spend_ink(i: int) -> void:
 
 func open_book() -> void:
 	if paused:
+		return
+	if not Game.has_book():
+		if ceremony_ready():
+			log_msg("You have no book yet. Your ceremony is waiting at the Hearth.")
+		else:
+			log_msg("You have no book yet. It will find you at Lv %d." % GameData.CEREMONY_LEVEL)
 		return
 	var awakened_now: bool = chapter.try_awaken()
 	paused = true
@@ -570,6 +652,8 @@ func give_up_character() -> void:
 
 # Designer tools (F1 panel)
 func dev_complete_trigger() -> void:
+	if not Game.has_book():
+		return
 	var a: Dictionary = ch.aspect
 	while not a.awakened and a.progress < a.need:
 		chapter.progress()
