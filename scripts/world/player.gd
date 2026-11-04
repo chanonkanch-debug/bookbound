@@ -61,7 +61,7 @@ func tick(dt: float) -> void:
 	var in_town := position.length() < GameData.TOWN_RADIUS
 	hp = minf(Game.max_hp(), hp + (30.0 if in_town else 1.2) * dt)
 	var regen: Dictionary = GameData.INK_REGEN
-	mana = minf(Game.max_mana(), mana + float(regen.hearth if in_town else regen.field) * dt)
+	mana = minf(Game.max_mana(), mana + float(regen.hearth if in_town else regen.field) * w.erasure.ink_regen(position) * dt)
 	if in_town:
 		w.streak = 0
 	if w.streak_t > 0.0:

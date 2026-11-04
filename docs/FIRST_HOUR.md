@@ -157,3 +157,34 @@ splatters. Headless on the test machine, over two runs: **rules 1.5 to 2.1 ms, w
 (worst single frame 10 to 16 ms)** with about 110 zones, 50 flying spells, 140 splatters and 8 monsters. 16.7 ms is 60 FPS, so
 there's room. Drawing on a real graphics card hasn't been measured here (the test machine
 has none); that's worth a check on your own computer with `-- --stress` without `--headless`.
+
+---
+
+## After The Unwritten, Phase 2 (erasure sites and torn pages)
+
+The first-hour bot now notices erasure sites when it sees one (within 450 px), goes back to
+them (curious and bold players at once, careful ones once they have a book), walks into the
+warm glow of a beaten site and rests there if it knows how. Seeds 1 to 3, all three players:
+
+| time | what happens |
+|---|---|
+| 0:09 to 0:46 | "The paper is bare here. Even the lines are thinning out." The first Fields site |
+| 0:38 to 1:38 | The Scrawl (its guardian) falls. "The smudges here had knotted into something bigger." |
+| 1:11 to 4:48 | **The first site written back.** "I wrote it back. I didn't know I could do that." |
+| 1:34 to 11:35 | The first torn page ("A torn page, not from my book.") |
+| 6:00 to 7:36 | The ceremony (6:36 to 11:26 before Phase 2: guardians and gathered monsters are worth XP) |
+| 9 to 41 | Marsh sites written back |
+| 15 to 54 | Reach sites written back |
+| 60:00 | 4 to 8 of 8 sites written back, 3 to 5 of 9 placed pages found |
+
+The quiet stretches still begin around minute 20 to 25, but they're shorter: the longest is
+now 8 to 9 minutes (up to 18 before Phase 2), and Reach sites keep giving new moments until the end
+of the hour. Re-erasure doesn't show up in the first hour (it needs 20 minutes away from a
+region, then a slow fade), so it's covered by the autotest instead.
+
+What felt off:
+- **The first site falls very early**, in the first two minutes for a bold player, at level 1.
+  It's a strong hook (the restoring wave is the best moment in the game), but it comes before
+  the player has learned much. The Scrawl was made tougher once (6 to 10 times an Inkling's
+  health, 3 escorts) and still falls in about a minute to the bot.
+- **The ceremony came about a minute sooner** because of the extra XP near sites.

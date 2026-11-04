@@ -122,7 +122,7 @@ func tick(dt: float, held: bool, want_slot := -1) -> void:
 	if reading:
 		var moving: bool = w.player.still <= 0.0
 		var was_ready: bool = t >= float(st.read)
-		t += dt * (float(GameData.READ.move_mult) if moving else 1.0)
+		t += dt * (float(GameData.READ.move_mult) if moving else 1.0) * w.erasure.read_speed(w.player.position)
 		if not was_ready and t >= float(st.read):
 			ready_fx = float(GameData.READABILITY.ready_flash)
 		if not held:

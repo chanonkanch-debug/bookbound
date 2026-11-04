@@ -44,6 +44,7 @@ var stat := {}            # per-minute counters
 var last_level := 1
 var died := 0
 var was_dead := false
+var sites_seen := {}      # erasure sites this player has noticed (The Unwritten, Phase 2)
 
 
 func run_first_hour() -> void:
@@ -77,6 +78,7 @@ func _play(pname: String, total: float) -> void:
 	minute_rows.clear()
 	seen = {"journal": 0, "ui": {}, "nudged": {}, "margins": 0, "visited": {}, "hands": 0}
 	knows = {}
+	sites_seen = {}
 	decided.clear()
 	dodges_done = 0
 	near_t = 0.0
@@ -188,7 +190,34 @@ func _wander(p) -> void:
 	if p.position.distance_to(waypoint) < 40.0 or waypoint.length() > b.y + 50.0:
 		var a := randf() * TAU
 		waypoint = Vector2.from_angle(a) * randf_range(b.x, b.y)
+		# The Unwritten, Phase 2: a bare patch it has seen draws it back, if it's brave enough
+		# (curious and bold players at once, careful ones once they have a book).
+		var drawn: bool = P.tries_keys or float(P.brave) > 1.0 or Game.has_book()
+		for site in GameData.Lore.SITES:
+			if drawn and sites_seen.has(site.id) and not wd.erasure.is_restored(site.id) \
+					and site.p.length() < b.y + 50.0 and randf() < 0.5:
+				waypoint = site.p
+				break
 	p.steer = (waypoint - p.position).normalized()
+
+
+## The Unwritten, Phase 2: what a newcomer does around erasure sites. Notices them when it
+## sees one; walks into the warm glow of a beaten site and, if it knows how, rests there.
+func _site_habits(p) -> bool:
+	for site in GameData.Lore.SITES:
+		if p.position.distance_to(site.p) < 450.0:
+			sites_seen[site.id] = true
+	if not knows.has("rest") or _engaged():
+		return false
+	if not wd.erasure.restorable_at(p.position).is_empty() and wd.can_rest():
+		p.steer = Vector2.ZERO
+		wd.rest_held = true
+		return true
+	for site in GameData.Lore.SITES:
+		if String(wd.erasure.state(site.id).state) == "cleared" and p.position.distance_to(site.p) < 320.0:
+			p.steer = (site.p - p.position).normalized()
+			return true
+	return false
 
 
 func _go_home(p) -> void:
@@ -201,6 +230,8 @@ func _go_home(p) -> void:
 ## Before the book: someone who has never played.
 func _think_bare_new() -> void:
 	var p = wd.player
+	if not wd.resting and _site_habits(p):
+		return
 	var frac: float = p.hp / Game.max_hp()
 	var pending: bool = Game.pending_level() > int(wd.ch.level)
 	# Resting, once found.
@@ -267,6 +298,8 @@ func _think_bare_new() -> void:
 ## With a book: the balance bot's tactics, but clumsier and with only the controls it found.
 func _think_with_book() -> void:
 	var p = wd.player
+	if not wd.resting and _site_habits(p):
+		return
 	if wd.resting:
 		p.steer = Vector2.ZERO
 		wd.rest_held = true
@@ -432,3 +465,5 @@ func _print_report(pname: String) -> void:
 	print("Quiet stretches (3+ minutes with nothing new): %s" % (", ".join(quiet_runs) if not quiet_runs.is_empty() else "none"))
 	print("Found: %s" % ", ".join(knows.keys()))
 	print("Deaths: %d · final level %d (pending %d) · book: %s" % [died, wd.ch.level, Game.pending_level(), "%s %s" % [wd.ch.el, wd.ch.thick] if Game.has_book() else "none"])
+	print("Erasure sites written back: %d of %d · torn pages found: %d of %d (%s)" % [wd.erasure.restored_count(), GameData.Lore.SITES.size(),
+		wd.ch.get("fragments", []).size(), GameData.Lore.FRAGMENTS.size(), ", ".join(wd.ch.get("fragments", []))])

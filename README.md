@@ -68,6 +68,7 @@ project.godot              Project settings (window size, which scripts load fir
 scenes/main.tscn           The starting scene. It only holds main.gd.
 scripts/
   data/game_data.gd        ★ All numbers and text: elements, spells, books, monsters, hidden chapters
+  data/lore_data.gd        The story's numbers and words: erasure sites, guardians, torn pages (GameData.Lore)
   game.gd                  Rolls books (with leaning), works out spell stats, saves and loads
   main.gd                  Switches between creation, the world and the ceremony; also the self-test
   dev/balance.gd           The balance bot (see below)
@@ -84,6 +85,8 @@ scripts/
   world/discovery.gd       What you've learned: monster affinities, terrain, spell secrets
   world/hands.gd           Bare hands that grow: moves learned from monsters, growth, hand secrets
   world/hidden_chapter.gd  ★ The secret: progress, margin hints, awakening
+  world/erasure.gd         Erasure sites: guardians, writing a place back, slow re-erasure (the world's save)
+  world/torn_pages.gd      Torn pages lying in the world, and picking them up
   ui/hud.gd                Side panel, spell buttons, journal, designer view
   ui/book_overlay.gd       The open book you see when pressing B
   ui/designer_panel.gd     F1: every number, plus everything found and not yet found
@@ -93,8 +96,10 @@ scripts/
   ui/book_cover.gd         Draws a book cover (used by both rite screens)
   ui/ui_theme.gd           Colours and button styles
   ui/pause_menu.gd         Esc / Start: settings, the key page, quit
+  ui/fragments_overlay.gd  The torn pages you found, as torn paper (from the book or journal)
   util/ink.gd              Drawing helpers for the ink-blob look
   util/element_fx.gd       How each element looks: shape and motion as well as colour
+  util/site_fx.gd          How erasure sites, the restoring wave, torn pages and Hearth windows look
 ```
 
 Everything is drawn with code (circles, blobs, lines), so there are no art files yet.
@@ -133,7 +138,7 @@ Other designer runs (all with `godot --headless --path . -- ...`):
 | command | what it does |
 |---|---|
 | `--firsthour` | three bots play their first hour like new players; prints a timeline (see `docs/FIRST_HOUR.md`) |
-| `--balance --only=books --el=wind --runs=8` | one part of the balance bot (`books`, `bare`, `chapters`, `firsthour`) |
+| `--balance --only=books --el=wind --runs=8` | one part of the balance bot (`books`, `bare`, `sites`, `chapters`, `firsthour`) |
 | `--stress` | times the busiest scene the game allows (16.7 ms per frame is 60 FPS) |
 | `--showcase` | screenshots of every element and reading state (run without `--headless`) |
 

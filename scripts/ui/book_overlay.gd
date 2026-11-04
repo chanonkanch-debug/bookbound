@@ -9,6 +9,7 @@ var ui_root: Control
 var C: Dictionary = GameData.COLORS
 var left: VBoxContainer
 var right: VBoxContainer
+var pages_btn: Button
 
 
 func _ready() -> void:
@@ -50,13 +51,25 @@ func _ready() -> void:
 	right.add_theme_constant_override("separation", 10)
 	pages.add_child(right)
 
+	var row := HBoxContainer.new()
+	v.add_child(row)
+	# The Unwritten, Phase 2: torn pages are kept at the back of the book.
+	pages_btn = Button.new()
+	pages_btn.text = String(GameData.Lore.LINES.fragments_button)
+	pages_btn.focus_mode = Control.FOCUS_NONE
+	pages_btn.pressed.connect(func():
+		visible = false
+		w.fragments_ui.open(self))
+	row.add_child(pages_btn)
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(sp)
 	var close_btn := Button.new()
 	close_btn.text = GameData.BOOK_TEXT.close
 	close_btn.theme_type_variation = "PrimaryButton"
 	close_btn.focus_mode = Control.FOCUS_NONE
-	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
 	close_btn.pressed.connect(close_book)
-	v.add_child(close_btn)
+	row.add_child(close_btn)
 	UiTheme.fit(self, ui_root)
 
 
@@ -111,7 +124,20 @@ func open(awakened_now: bool) -> void:
 	else:
 		right.modulate.a = 1.0
 		right.add_child(_label(GameData.BOOK_TEXT.blank, 16, Color(C.ink_soft, 0.7), true))
+	pages_btn.visible = not ch.get("fragments", []).is_empty()
 	visible = true
+
+
+## Q / E (or a shoulder button) with this open turns to the torn pages.
+func _process(_dt: float) -> void:
+	if visible and pages_btn.visible and (Input.is_action_just_pressed("page_next") or Input.is_action_just_pressed("page_prev")):
+		pages_btn.pressed.emit()
+
+
+## Back from the torn pages.
+func reopen() -> void:
+	visible = true
+	w.paused = true
 
 
 func close_book() -> void:

@@ -4,7 +4,8 @@ extends Node
 ## `-- --showcase` (run without --headless, or under xvfb-run) sets up busy scenes and saves
 ##   screenshots to the user folder: every element's bolts, zones and bursts side by side,
 ##   monsters at each point of a wind-up, and every reading state (reading, ready, overcharged,
-##   fizzled, broken, too little ink, nearly dead).
+##   fizzled, broken, too little ink, nearly dead), an erasure site in every state (bare,
+##   cleared, the restoring wave, restored, fading), a torn page and the Hearth's windows.
 ## `-- --stress` builds the heaviest scene the game allows (most monsters, burning grass,
 ##   puddle combos, every zone at once, lingering splatters) and prints how long the rules
 ##   and a full frame take. 16.7 ms per frame is 60 FPS.
@@ -155,6 +156,60 @@ func run_showcase() -> void:
 		w.camera.zoom = Vector2(2.5, 2.5)
 		await _frames(2)
 		await _shot("showcase_3_read_%s" % st_name)
+	w.camera.zoom = Vector2.ONE
+	# 4. The Unwritten, Phase 2: an erasure site bare, cleared, mid-restore, restored, fading.
+	var L = GameData.Lore
+	var s0: Dictionary = L.SITES[0]
+	for look in ["bare", "cleared", "wave_1", "wave_2", "wave_3", "restored", "fading"]:
+		_book("earth")
+		await _world_at(s0.p + Vector2(0, 160))
+		var er = w.erasure
+		var st: Dictionary = er.state(s0.id)
+		match look:
+			"cleared":
+				st.state = "cleared"
+			"wave_1", "wave_2", "wave_3":
+				er.restore(s0.id)
+				er.fx[s0.id] = float(L.RESTORE_FX.time) * {"wave_1": 0.15, "wave_2": 0.4, "wave_3": 0.75}[look]
+			"restored":
+				er.restore(s0.id)
+				er.fx.clear()
+			"fading":
+				er.restore(s0.id)
+				er.fx.clear()
+				st.pale = 0.5
+		for e in w.enemies:
+			e.queue_free()
+		w.enemies.clear()
+		er.guardians.clear()
+		w.camera.global_position = s0.p
+		w.camera.position_smoothing_enabled = false
+		w.camera.zoom = Vector2(1.6, 1.6)
+		await _frames(2)
+		await _shot("showcase_4_site_%s" % look)
+	# 5. A torn page in the grass, one behind a stone, and the Hearth with two windows lit.
+	_book("earth")
+	var hymn: Dictionary = L.FRAGMENTS[0]
+	await _world_at(hymn.p + Vector2(40, 0))
+	w.camera.global_position = hymn.p
+	w.camera.position_smoothing_enabled = false
+	w.camera.zoom = Vector2(3, 3)
+	await _frames(2)
+	await _shot("showcase_5_page_grass")
+	w.erasure.restore(L.SITES[0].id)
+	w.erasure.restore(L.SITES[3].id)
+	w.erasure.fx.clear()
+	w.player.position = Vector2(0, 40)
+	w.camera.global_position = Vector2.ZERO
+	w.camera.zoom = Vector2(2.2, 2.2)
+	await _frames(2)
+	await _shot("showcase_5_hearth_windows")
+	w.ch.fragments = ["hymn", "letter"]
+	w.camera.zoom = Vector2.ONE
+	w.fragments_ui.open(null)
+	await _frames(2)
+	await _shot("showcase_5_torn_pages")
+	w.fragments_ui.close()
 	w.camera.zoom = Vector2.ONE
 	print("showcase done")
 

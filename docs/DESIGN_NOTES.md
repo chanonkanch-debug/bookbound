@@ -470,3 +470,138 @@ will be re-run then.
   Run `-- --stress` without `--headless` on a real computer.
 - **The first kill writes four lines at once.** They're queued now, so each can be read.
 - **The bots fight better than people**, so their times are the fastest a person would see.
+
+---
+
+## The Unwritten, Phase 2: lore, erasure sites, restoring the world
+
+The story is in `docs/LORE.md` (approved by the owner before building). Numbers and words
+for this phase are in **`scripts/data/lore_data.gd`**, the first split of the data layer. It
+is reached through `game_data.gd` as `GameData.Lore` (for example `GameData.Lore.SITES`), so
+`game_data.gd` is still the single entry point. Split rule from now on: a phase with a lot of
+text gets its own file under `scripts/data/`, preloaded as a const at the top of `game_data.gd`
+and listed in the header comment there.
+
+New code: `world/erasure.gd` (rules for sites, guardians, restoring and re-erasure),
+`world/torn_pages.gd` (pages lying in the world), `util/site_fx.gd` (how sites, the wave,
+pages and the Hearth's windows look), `ui/fragments_overlay.gd` (reading the pages).
+
+### Erasure sites (`SITES`, `ERASURE`)
+
+Eight sites: two in Inkling Fields, three in Blot Marsh, three in Knight's Reach. Each is
+"erased" (bare), "cleared" (guardian beaten, still bare) or "restored".
+
+Near a bare site (full strength inside it, fading to nothing at twice its radius):
+- spells read at 0.85 speed (`read_speed`), casting ink comes back at half speed (`ink_regen`);
+- ground patches within 1.4 radii lose their nature and their look (`terrain_fade`): grass
+  won't burn, puddles don't soak, stones and open ground do nothing;
+- 45% of new monsters appear at a bare site within 800 px instead of around you
+  (`gather_chance`), but only while its guardian sleeps. During the guardian fight nothing
+  else gathers, and once it's beaten the pale stops drawing them.
+
+### Guardians (`GUARDIANS`, `GUARDIAN_WAKE`, `GUARDIAN_LEASH`, `GUARDIAN_INK`)
+
+When you come within 170 px of a bare site's edge, its guardian wakes with 1 to 3 ordinary
+monsters of the region: the Scrawl (an Inkling x10 health), the Spill (a Blot x2.5), the
+Hollow (a Knight x1.5). They're bigger, hit a little harder, are wrapped in a pale halo, and:
+- **have no element affinities** ("made of the pale"), so no book is locked out of a site;
+- don't despawn when you walk away, and won't chase you further than 3 site radii;
+- don't heal, so a fight can be finished in several goes;
+- give 1.5 to 2 times normal XP (first tried at 4 to 6 times: a guardian alone was worth a
+  region's whole XP test, which sped the book table up by a third).
+
+`GUARDIAN_INK` multiplies each element's damage against guardians, for single-target balance:
+lightning 1.5, the rest 1.0. Chain spells waste their jumps on one big target.
+
+### Restoring
+
+Rest at the centre of a cleared site (hold R, within 0.6 radii) to write it back. The site
+gets a campfire (so later rests there are one press), a colour wash for its region, denser
+lines, small flowers and its own detail (a fence, grass, a pool, stepping stones, reeds, a
+red banner, hill contours, a carved line), and around it 70% of new monsters don't appear
+(`calm_skip` within 3 radii). One house in the Hearth lights its window per restored site
+(`HEARTH_WINDOWS`); Phase 5 adds people.
+
+The moment itself (`RESTORE_FX`, `site_fx.gd`): a short hit-pause, then over 4.5 s a gilt
+front spreads from the centre with ink tendrils racing ahead of it and gilt sparks rising;
+the pale drains away behind it and the colour and details are drawn in as the front passes
+them. Two journal lines: "I wrote it back. I didn't know I could do that." the first time, and
+the site's own line.
+
+### Slow re-erasure (`REERASE`)
+
+A restored site starts to fade once its region has gone 20 minutes of play without a visit
+(`grace`), and is bare again 30 minutes after that (`fade_time`). Visiting the region stops
+the fading; resting at the site writes it back in full ("I wrote it back again. It remembered
+faster this time."). The first fade past a quarter writes "The pale is creeping back where I
+haven't been." Fully faded, it loses its fire, its window goes dark and the guardian returns.
+Off with `REERASE.enabled`, or the pause-menu setting "The pale returns to forgotten places"
+(`Game.settings.reerase`, on by default).
+
+### Torn pages (`FRAGMENTS`)
+
+Twelve pages, the texts from LORE.md. Nine are placed now: two in grass (seen within 110 px),
+three behind stones (a stone is always drawn, the page corner shows within 170 px), four at
+sites (they appear once the site is written back). The last three wait for the Stacks
+(Phase 7) and aren't placed anywhere yet. Walk over one to pick it up (30 px). The first one
+writes a journal line; each shows its title briefly where it lay.
+
+They're read as torn paper, one at a time, in the order found, newest first, with a row of
+dots instead of a count. With a book they're at the back of the book (a "Torn pages" button,
+or Q / E / a shoulder button with the book open); before the book they're kept with the
+journal ("I keep them folded with my own page."). The key page lists them once one is found.
+
+### Saves
+
+- **Character save version 5**: `fragments` (ids in the order found). Migration adds an
+  empty list; books, levels, discoveries and chapter progress are untouched.
+- **A new world save**, `user://bookbound_world.json`, version 1 (`Game.world`): each site's
+  state, paleness, times written back and whether its fading was noticed; when each region
+  was last visited; and the world's play time. It's apart from the character so a host can
+  own it later. A missing world file (any older save) starts a fresh world.
+  `Game.migrate_world` adds sites from later versions without touching restored ones.
+- A new character starts a new world.
+
+### F1
+
+New sections: every site's state, paleness, how long its region has been left alone,
+whether its guardian is awake, and how many times it was written back; the erasure strength,
+read speed and ink refill where you stand; every torn page, found or not and where it lies.
+New button: "Write back the nearest site".
+
+### Balance after Phase 2
+
+Guardian fights (`--balance --only=sites`, medium books at Lv 5 / 8 / 11, 10 runs; bare hands
+at Lv 4 in the Fields), seconds from the guardian waking to its fall:
+
+| | Fields | Marsh | Reach |
+|---|---|---|---|
+| fire | 22 | 25 | 76 |
+| water | 27 | 46 | 65 |
+| earth | 41 | 34 | 56 |
+| wind | 22 | 42 | 67 |
+| lightning | 16 | 59 | 59 |
+| average | 26 | 41 | 65 |
+| bare hands (Lv 4) | 38 | | |
+
+Every book (and bare hands) writes back every site in every run. Knight's Reach is within
+±18% for every book. The Fields and Marsh fights are short and noisy, from -39% to +60%: two
+batches of ten runs disagree by about as much, because a medium book gets a random second
+page and a 20-second fight swings on a single wind-up. Not yet a ±20% proof; Phase 3's
+branch balance re-runs it with more runs per cell.
+
+Book table (`--balance --only=books`, 4 runs): region averages are now 61 / 80 / 122 seconds
+(was 82 / 113 / 164 before Phase 2), because bots start in a fresh world each run and the
+guardians and gathered monsters near sites are worth XP. Per element, against the average of
+all fifteen books: fire -22 / +29 / +18, water 0 / +6 / 0, earth +19 / +1 / -2,
+wind -22 / -25 / -17, lightning +25 / -12 / +1. Wind stays a little fast, as before.
+
+### Deferred or not quite right yet (The Unwritten, Phase 2)
+
+- **Bots restore four to eight sites in their first hour.** A person will be slower, but this
+  may still be faster than "slow and meaningful" wants. The first Fields site falls at 1 to 5
+  minutes, before the ceremony. Tunable with the guardians' health.
+- **Guardian fights aren't within ±20% per book yet** (see above).
+- **Site names** aren't shown anywhere yet; the Cartographer (Phase 5) marks them on the map.
+- **The Stacks' three pages** are written but not placed (Phase 7).
+- **Day and night** don't touch sites yet (Phase 6 makes them pulse at night).
