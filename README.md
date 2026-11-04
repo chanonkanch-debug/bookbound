@@ -69,6 +69,7 @@ scenes/main.tscn           The starting scene. It only holds main.gd.
 scripts/
   data/game_data.gd        ★ All numbers and text: elements, spells, books, monsters, hidden chapters
   data/lore_data.gd        The story's numbers and words: erasure sites, guardians, torn pages (GameData.Lore)
+  data/ink_data.gd         Monster inks, vials, and how every kind of spell branches with them (GameData.Inks)
   game.gd                  Rolls books (with leaning), works out spell stats, saves and loads
   main.gd                  Switches between creation, the world and the ceremony; also the self-test
   dev/balance.gd           The balance bot (see below)
@@ -87,18 +88,19 @@ scripts/
   world/hidden_chapter.gd  ★ The secret: progress, margin hints, awakening
   world/erasure.gd         Erasure sites: guardians, writing a place back, slow re-erasure (the world's save)
   world/torn_pages.gd      Torn pages lying in the world, and picking them up
+  world/inks.gd            Monster ink drops, vials, writing with a pot, branching evolutions, dipping bare hands
   ui/hud.gd                Side panel, spell buttons, journal, designer view
   ui/book_overlay.gd       The open book you see when pressing B
   ui/designer_panel.gd     F1: every number, plus everything found and not yet found
   ui/journal_overlay.gd    The journal (J) and bestiary
-  ui/rest_overlay.gd       The page you write levels into while resting
+  ui/rest_overlay.gd       The page you write levels into while resting, and the ink pots
   ui/map_overlay.gd        The hand-drawn map (M), once you've found it
   ui/book_cover.gd         Draws a book cover (used by both rite screens)
   ui/ui_theme.gd           Colours and button styles
   ui/pause_menu.gd         Esc / Start: settings, the key page, quit
   ui/fragments_overlay.gd  The torn pages you found, as torn paper (from the book or journal)
   util/ink.gd              Drawing helpers for the ink-blob look
-  util/element_fx.gd       How each element looks: shape and motion as well as colour
+  util/element_fx.gd       How each element looks: shape and motion as well as colour; ink marks and drops
   util/site_fx.gd          How erasure sites, the restoring wave, torn pages and Hearth windows look
 ```
 
@@ -138,7 +140,8 @@ Other designer runs (all with `godot --headless --path . -- ...`):
 | command | what it does |
 |---|---|
 | `--firsthour` | three bots play their first hour like new players; prints a timeline (see `docs/FIRST_HOUR.md`) |
-| `--balance --only=books --el=wind --runs=8` | one part of the balance bot (`books`, `bare`, `sites`, `chapters`, `firsthour`) |
+| `--balance --only=books --el=wind --runs=8` | one part of the balance bot (`books`, `bare`, `sites`, `chapters`, `firsthour`, `branches`) |
+| `--balance --only=branches --el=fire --th=thin` | every branch path of one book (add `--el=bare` for bare hands) |
 | `--stress` | times the busiest scene the game allows (16.7 ms per frame is 60 FPS) |
 | `--showcase` | screenshots of every element and reading state (run without `--headless`) |
 

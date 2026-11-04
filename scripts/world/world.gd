@@ -21,6 +21,7 @@ const Hands := preload("res://scripts/world/hands.gd")
 const Erasure := preload("res://scripts/world/erasure.gd")
 const TornPages := preload("res://scripts/world/torn_pages.gd")
 const SiteFx := preload("res://scripts/util/site_fx.gd")
+const InkRules := preload("res://scripts/world/inks.gd")
 const HudScript := preload("res://scripts/ui/hud.gd")
 const BookScript := preload("res://scripts/ui/book_overlay.gd")
 const DesignerScript := preload("res://scripts/ui/designer_panel.gd")
@@ -50,6 +51,7 @@ var discovery
 var hands
 var erasure                 # The Unwritten, Phase 2: erasure sites and restoring (Game.world)
 var pages                   # The Unwritten, Phase 2: torn pages lying in the world
+var inks                    # The Unwritten, Phase 3: monster ink drops, vials and branches
 var hud
 var book
 var designer
@@ -87,6 +89,8 @@ var rest_held := false      # the rest key is down (set from input, or by the ba
 var rest_pressed := false   # the rest key was just pressed this frame
 var rest_fx := 0.0          # >0 just after a rest was interrupted, for the visuals
 var auto_rest_ui := false   # the balance bot skips the end-of-rest screens and writes ink evenly
+var bot_pot := "plain"      # ...dipping into this pot when it has some ("carried" = any it has, The Unwritten, Phase 3)
+var bot_dip := "plain"      # ...and dipping its bare hands into this one
 var nudge_clock := {}
 var nudge_id := ""
 var nudge_t := 0.0
@@ -122,6 +126,9 @@ var region := -1            # which region you're in (index into REGIONS)
 var hitstop := 0.0          # >0 while the world holds still after a heavy hit (feel only, never in rules)
 var shake_t := 0.0
 var early_lines: Array = [] # discoveries noticed before your first kill wait for it (see journal())
+var volley_id := 0          # The Unwritten, Phase 3: shots of one cast share an id (a volley knocks back once)
+var guard_t := 0.0          # The Unwritten, Phase 3: stubborn spells turn harm aside for a while after
+var guard_f := 0.0
 
 
 func _ready() -> void:
@@ -167,6 +174,7 @@ func _ready() -> void:
 	erasure = Erasure.new(self)
 	pages = TornPages.new(self)
 	discovery = Discovery.new(self)
+	inks = InkRules.new(self)
 	hands = Hands.new(self)
 	hud = HudScript.new()
 	hud.w = self
@@ -309,6 +317,7 @@ func _update(dt: float) -> void:
 
 	player.tick(dt)
 	brace_t = maxf(0.0, brace_t - dt)
+	guard_t = maxf(0.0, guard_t - dt)
 	decoy_t = maxf(0.0, decoy_t - dt)
 	casting.tick(dt, (read_held or last_page_held) and not resting, 3 if last_page_held else -1)
 	if not Game.has_book():
@@ -318,6 +327,7 @@ func _update(dt: float) -> void:
 	_tick_region()
 	erasure.tick(dt)
 	pages.tick(dt)
+	inks.tick(dt)
 	_tick_unlocks()
 	_tick_nudges(dt)
 	ally.tick(dt)
@@ -435,6 +445,21 @@ func _update_projectiles(dt: float) -> void:
 	for pj in projectiles:
 		pj.p += pj.v * dt
 		pj.life -= dt
+		if pj.get("returns", false):
+			# The Unwritten, Phase 3: a pale bolt turns at the end of its flight and comes home,
+			# through anything in the way (it may hit each one again).
+			if not pj.turned and (pj.life <= 0.0 or pj.get("turn_now", false)):
+				# Its whole flight out (or until something stops it), then home again. On the way
+				# back it strikes the first thing it meets that it didn't strike going out.
+				pj.turned = true
+				pj.pierce = 0
+				pj.life = float(pj.life0) * 1.2   # long enough to come all the way back
+			if pj.turned:
+				var home_v: Vector2 = player.position - pj.p
+				if home_v.length() < player.r + 4.0:
+					pj.life = 0.0
+					continue
+				pj.v = home_v.normalized() * pj.v.length()
 		if pj.el == "fire":
 			ignite_at(pj.p, 4.0)
 		elif pj.el == "wind":
@@ -446,12 +471,16 @@ func _update_projectiles(dt: float) -> void:
 				continue
 			if pj.p.distance_to(e.position) < e.r + 5.0:
 				_secret_on_hit(e, pj.st, pj.src)
-				hit(e, pj.dmg, pj.el, pj.src, String(pj.st.get("move", "")))
+				hit(e, pj.dmg * (float(pj.st.get("back", 1.0)) if pj.get("turned", false) else 1.0), pj.el, pj.src, String(pj.st.get("move", "")))
 				pj.hit.append(e.get_instance_id())
 				var st: Dictionary = pj.st
-				if st.get("push", 0.0) > 0.0:
+				# A branched volley knocks each one back once, not once per shot (The Unwritten, Phase 3).
+				var once: bool = int(pj.get("vid", 0)) == 0 or e.get_meta("knock_vid", -1) != int(pj.vid)
+				if st.get("push", 0.0) > 0.0 and once:
 					e.knock += pj.v.normalized() * float(st.push) * 2.2
 					e.interrupt()
+					if int(pj.get("vid", 0)) != 0:
+						e.set_meta("knock_vid", int(pj.vid))
 				if st.get("soak", false):
 					e.soak = 3.5
 				if pj.explode:
@@ -461,6 +490,10 @@ func _update_projectiles(dt: float) -> void:
 							hit(o, pj.dmg * 0.5, pj.el, pj.src)
 				pj.pierce -= 1
 				if pj.pierce < 0:
+					if pj.get("returns", false) and not pj.turned:
+						pj.turn_now = true   # a pale bolt that's stopped turns for home instead
+						pj.pierce = 0
+						break
 					pj.life = 0.0
 	projectiles = projectiles.filter(func(p): return p.life > 0.0)
 
@@ -471,6 +504,15 @@ func _update_zones(dt: float) -> void:
 		z.tt -= dt
 		var st: Dictionary = z.st
 		_move_zone(z, dt)
+		if z.has("follow"):
+			z.p = (ally if z.follow == "ally" else player).position   # a pale zone walks with you
+		for ce in z.get("caged", []):
+			# A pale wall: nothing that stood inside when it rose can get out.
+			if is_instance_valid(ce) and not ce.dead:
+				var cd: float = ce.position.distance_to(z.p)
+				var lim: float = maxf(4.0, z.r - ce.r)
+				if cd > lim:
+					ce.position = z.p + (ce.position - z.p) / cd * lim
 		for e in enemies:
 			if e.dead:
 				continue
@@ -707,6 +749,7 @@ func kill(e, src: String) -> void:
 	streak += 1
 	streak_t = float(GameData.STREAK_WINDOW)
 	chapter.on_kill(e, src)
+	inks.on_kill(e)   # it may leave a drop of its own ink (before erasure forgets the guardian)
 	erasure.on_kill(e)
 	gain_xp(e.xp)
 
@@ -755,6 +798,7 @@ func hurt(d: float) -> void:
 	if player.dead_t > 0.0:
 		return
 	clean_n = 0
+	d *= 1.0 - guard_share()
 	if player.still >= float(GameData.LEAN.planted_time) and not Game.has_book():
 		signal_lean("absorb", d / 10.0)
 		d *= 1.0 - float(GameData.STANCES.planted_guard)
@@ -772,6 +816,15 @@ func hurt(d: float) -> void:
 		journal("near_death")
 	if player.hp <= 0.0:
 		_die()
+
+
+## The Unwritten, Phase 3: how much of a blow stubborn spells turn aside right now (0..1).
+func guard_share() -> float:
+	var g := guard_f if guard_t > 0.0 else 0.0
+	for z in zones:
+		if z.src == "player" and float(z.get("guard_in", 0.0)) > 0.0 and player.position.distance_to(z.p) < z.r:
+			g = maxf(g, float(z.guard_in))
+	return clampf(g, 0.0, 0.9)
 
 
 func _die() -> void:
@@ -881,8 +934,8 @@ func perform(st_in: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 		_saw_terrain_if(mine, "open_reach")
 	match st.kind:
 		"bolt":
-			var n := 5 if tier >= 2 else (3 if tier >= 1 else 1)
-			var spread := 0.17
+			var n := maxi(1, (5 if tier >= 2 else (3 if tier >= 1 else 1)) + int(st.get("count", 0)))
+			var spread := 0.17 * float(st.get("spread", 1.0))
 			if sname == "Tide Shot" and in_puddle and mine:
 				n += 2
 				spread = float(GameData.SECRETS["Tide Shot"].spread)
@@ -891,12 +944,18 @@ func perform(st_in: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 				st.pierce = int(st.get("pierce", 0)) + int(GameData.SECRETS["Stone Shard"].pierce)
 				dmg *= float(GameData.SECRETS["Stone Shard"].dmg)
 				discovery.secret(sname)
+			volley_id += 1
+			var vid := volley_id
 			for k in n:
 				var ang := dir.angle() + (k - (n - 1) / 2.0) * spread
 				projectiles.append({
 					"p": origin, "v": Vector2.from_angle(ang) * float(st.speed), "life": float(st.get("life", 1.1)),
-					"dmg": dmg, "el": st.el, "src": src, "pierce": int(st.get("pierce", 0)),
+					"life0": float(st.get("life", 1.1)), "dmg": dmg, "el": st.el, "src": src, "pierce": int(st.get("pierce", 0)),
 					"hit": [], "st": st, "explode": tier >= 3,
+					# The Unwritten, Phase 3: how its ink branch looks, and a pale bolt flies home.
+					"size": float(st.get("size", 1.0)), "mark": String(st.get("mark", "")),
+					"vid": vid if String(st.get("mark", "")) != "" else 0,
+					"returns": bool(st.get("returns", false)) and mine, "turned": false,
 				})
 		"chain":
 			var target = chain_target(origin, aim, float(st.range))
@@ -908,14 +967,28 @@ func perform(st_in: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 			var done: Array = []
 			var from_p := origin
 			var cur = target
+			var cw: float = float(st.get("size", 1.0))
 			for j in int(st.jumps) + 2 * tier + 1:
 				if cur == null:
 					break
-				chains.append({"a": from_p, "b": cur.position, "t": 0.2, "col": col, "wide": false})
+				chains.append({"a": from_p, "b": cur.position, "t": 0.2, "col": col, "wide": false, "w": cw, "mark": String(st.get("mark", ""))})
 				hit(cur, dmg * (0.8 if j > 0 else 1.0), st.el, src)
+				if float(st.get("push", 0.0)) > 0.0 and not cur.dead:
+					_push_soak_slow(cur, {"push": float(st.push)}, from_p)
 				done.append(cur)
 				from_p = cur.position
 				cur = nearest(cur.position, 170.0, done)
+			# The Unwritten, Phase 3: a stubborn spark bites again; a pale one goes back to where it began.
+			if float(st.get("linger", 0.0)) > 0.0:
+				for de in done:
+					var lk: float = float(st.linger)
+					delayed.append({"t": 0.5, "fn": func():
+						if is_instance_valid(de) and not de.dead:
+							ring(de.position, 3, 16, 0.25, col, 1.5)
+							hit(de, dmg * lk, st.el, src)})
+			if bool(st.get("loops", false)) and done.size() > 1 and not target.dead:
+				chains.append({"a": from_p, "b": target.position, "t": 0.3, "col": InkRules.color("pale"), "wide": false, "w": cw, "mark": "pale"})
+				hit(target, dmg * 0.8, st.el, src)
 			if sname == "Spark" and mine and pool != null:
 				# Secret: in water, the spark finds everything standing in that puddle.
 				var any := false
@@ -933,22 +1006,36 @@ func perform(st_in: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 				hurt(Game.max_hp() * float(GameData.SECRETS["Arc Nova"].self_dmg))
 				discovery.secret(sname)
 			var crash: bool = sname == "Undertow" and mine
-			var pulse := func():
+			var inward: bool = bool(st.get("inward", false))
+			var pulse_at := func(share: float):
 				var c: Vector2 = o.position
-				ring(c, 8, r, 0.4, col, 3)
+				ring(c, 8, r, 0.4, col, 3.0 * float(st.get("size", 1.0)))
+				_mark_ring(c, r, String(st.get("mark", "")), share < 1.0)
 				for e in enemies:
 					if not e.dead and c.distance_to(e.position) < r + e.r:
-						hit(e, dmg, st.el, src, String(st.get("move", "")))
-						_push_soak_slow(e, st, c)
+						hit(e, dmg * share, st.el, src, String(st.get("move", "")))
+						if inward:
+							# The pale turned it inside out: it gathers them to you.
+							e.knock += (c - e.position).normalized() * maxf(140.0, float(st.get("push", 0.0))) * 2.2
+							e.interrupt()
+							var pst: Dictionary = st.duplicate()
+							pst.push = 0.0
+							_push_soak_slow(e, pst, c)
+						else:
+							_push_soak_slow(e, st, c)
 						if crash:
 							e.crash_t = float(GameData.SECRETS["Undertow"].window)
 							e.crash_kind = "undertow"
 							e.crash_dmg = dmg * float(GameData.SECRETS["Undertow"].dmg)
 				if st.el == "fire":
 					ignite_at(c, r)
+			var pulse := func(): pulse_at.call(1.0)
 			pulse.call()
 			if tier >= 3:
 				delayed.append({"t": 0.35, "fn": pulse})
+			if float(st.get("echo", 0.0)) > 0.0:
+				var ek: float = float(st.echo)
+				delayed.append({"t": 0.5, "fn": func(): pulse_at.call(ek)})
 			if sname == "Quake" and mine and _inside_own(origin, "Rampart"):
 				var Q: Dictionary = GameData.SECRETS["Quake"]
 				for k in int(Q.echoes):
@@ -963,6 +1050,26 @@ func perform(st_in: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 			var zr: float = float(st.radius) * (1.0 + 0.15 * tier)
 			var life: float = float(st.dur) * (1.0 + 0.3 * tier)
 			var z_extra := {}
+			# The Unwritten, Phase 3: a pale zone sits on you; a pale wall rises on an enemy and holds it.
+			if bool(st.get("follows", false)):
+				zp = o.position
+				z_extra.follow = src
+			var caged: Array = []
+			if bool(st.get("cages", false)):
+				var ct = chain_target(origin, aim, float(st.range) + 60.0)
+				if ct != null:
+					zp = ct.position
+				for e in enemies:
+					if not e.dead and e.position.distance_to(zp) < zr:
+						caged.append(e)
+				z_extra.caged = caged
+			if float(st.get("raise_push", 0.0)) > 0.0:
+				for e in enemies:
+					if not e.dead and e.position.distance_to(zp) < zr + e.r:
+						_push_soak_slow(e, {"push": float(st.raise_push)}, zp)
+			if float(st.get("guard_in", 0.0)) > 0.0 and mine:
+				z_extra.guard_in = float(st.guard_in)
+			z_extra.mark = String(st.get("mark", ""))
 			if st.el == "water" and terrain.at(zp, "puddle") != null:
 				zr *= float(T.puddle_grow)
 				_saw_terrain_if(mine, "puddle_grow")
@@ -997,7 +1104,7 @@ func perform(st_in: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 			var end_p: Vector2 = origin + dir * float(st.dash_len)
 			if end_p.length() > GameData.WORLD_RADIUS - 15.0:
 				end_p = end_p.normalized() * (GameData.WORLD_RADIUS - 15.0)
-			var width := 34.0 + 10.0 * tier
+			var width := (34.0 + 10.0 * tier) * float(st.get("width", 1.0))
 			var through := 0
 			for e in enemies:
 				if e.dead:
@@ -1007,18 +1114,55 @@ func perform(st_in: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 					hit(e, dmg, st.el, src, String(st.get("move", "")))
 					_push_soak_slow(e, {"push": float(st.get("push", 80.0))}, closest)
 					through += 1
-			chains.append({"a": origin, "b": end_p, "t": 0.25, "col": col, "wide": true})
+			chains.append({"a": origin, "b": end_p, "t": 0.25, "col": col, "wide": true, "w": float(st.get("width", 1.0)) * float(st.get("size", 1.0)), "mark": String(st.get("mark", ""))})
 			o.position = end_p
 			if mine:
 				player.facing = dir
 			if src == "player":
-				player.dodge_t = float(GameData.DODGE_TIME)
+				player.dodge_t = float(GameData.DODGE_TIME) * float(st.get("dodge", 1.0))
+			if float(st.get("echo_dash", 0.0)) > 0.0 and mine:
+				# The pale step remembers it should have stayed: back along the line, hitting again.
+				var back: Vector2 = origin
+				var share: float = float(st.echo_dash)
+				var edmg := dmg
+				var ew := width
+				delayed.append({"t": float(st.get("echo_delay", 0.45)), "fn": func():
+					if player.dead_t > 0.0:
+						return
+					var from_p: Vector2 = player.position
+					for e in enemies:
+						if not e.dead and e.position.distance_to(Geometry2D.get_closest_point_to_segment(e.position, from_p, back)) < ew + e.r:
+							hit(e, edmg * share, st.el, src)
+					chains.append({"a": from_p, "b": back, "t": 0.3, "col": InkRules.color("pale"), "wide": true, "w": 1.0, "mark": "pale"})
+					player.position = back
+					player.dodge_t = maxf(player.dodge_t, float(GameData.DODGE_TIME))})
 			ring(end_p, 6, 60, 0.35, col, 2)
 			if sname == "Cyclone Step" and mine and through >= int(GameData.SECRETS["Cyclone Step"].count):
 				var CS: Dictionary = GameData.SECRETS["Cyclone Step"]
 				_add_zone(end_p, float(CS.radius), float(CS.dur), 0.5, dmg * 0.2, {"el": "wind", "kind": "zone", "name": "whirlwind", "pull": 110.0}, src)
 				discovery.secret(sname)
+	if mine and float(st.get("guard", 0.0)) > 0.0:
+		# Stubborn ink: harm is turned aside for a while after the cast.
+		guard_t = float(st.get("guard_time", 2.0))
+		guard_f = float(st.guard)
 	return true
+
+
+## A second ring that shows a spell's ink branch (The Unwritten, Phase 3): quick ink snaps
+## out thin and fast, heavy ink lands thick and dark, stubborn ink leaves a double rule,
+## pale ink a faint grey halo.
+func _mark_ring(c: Vector2, r: float, mark: String, faint := false) -> void:
+	var a := 0.5 if faint else 1.0
+	match mark:
+		"quick":
+			ring(c, r * 0.5, r * 1.05, 0.2, Color(InkRules.color("quick"), a), 1.0)
+		"heavy":
+			ring(c, r * 0.9, r, 0.55, Color(C.ink, 0.85 * a), 5.0)
+		"stubborn":
+			ring(c, r * 0.82, r * 0.88, 0.8, Color(InkRules.color("stubborn"), a), 1.5)
+			ring(c, r * 0.94, r, 0.8, Color(InkRules.color("stubborn"), a), 1.5)
+		"pale":
+			ring(c, r * 1.1, r * 0.7, 0.6, Color(InkRules.color("pale"), 0.8 * a), 4.0)
 
 
 func _add_zone(p: Vector2, r: float, life: float, tick: float, dmg: float, st: Dictionary, src: String) -> Dictionary:
@@ -1271,17 +1415,21 @@ func last_page_ready() -> bool:
 	return a.awakened and a.id == "lastpage" and player.dead_t <= 0.0 and player.hp / Game.max_hp() < 0.3 and last_page_cd <= 0.0
 
 
-## Writes one writing ink into page i (only while resting, see rest_overlay.gd).
-## Returns true if it was written.
-func spend_ink(i: int) -> bool:
+## Writes one writing ink into page i (only while resting, see rest_overlay.gd), dipped in
+## `pot` (The Unwritten, Phase 3: "plain" or a monster ink you carry). Returns true if written.
+func spend_ink(i: int, pot := "plain") -> bool:
 	var s: Dictionary = ch.spells[i]
 	if ch.ink < 1 or s.lvl >= Game.max_spell_level():
 		return false
 	var tier_before := int(s.lvl / 4.0)
 	s.lvl += 1
 	ch.ink -= 1
+	inks.write(i, pot)
 	if int(s.lvl / 4.0) > tier_before:
+		var took: String = inks.resolve_step(i)
 		ring(player.position, 10, 90, 0.7, C[ch.el], 3)
+		if took != "plain":
+			ring(player.position, 14, 120, 0.9, InkRules.color(took), 2.5)
 		journal("first_evolve")
 	hud.rebuild_spells()
 	Game.save_game()
@@ -1382,16 +1530,24 @@ func finish_rest() -> void:
 	rest_ui.show_rest(n)
 
 
-## Balance bot: write ink into the lowest page, evenly.
+## Balance bot: write ink into the lowest page, evenly, dipping into `bot_pot`
+## (and its bare hands into `bot_dip`).
 func _auto_write() -> void:
 	if not Game.has_book():
+		if inks.dip_waiting() != "":
+			var dp: Array = inks.dip_pots()
+			inks.dip(dp.pick_random() if bot_dip == "carried" and not dp.is_empty() else bot_dip)
 		return
 	while ch.ink > 0:
 		var best := -1
 		for i in ch.spells.size():
 			if ch.spells[i].lvl < Game.max_spell_level() and (best < 0 or ch.spells[i].lvl < ch.spells[best].lvl):
 				best = i
-		if best < 0 or not spend_ink(best):
+		var pot := bot_pot
+		if pot == "carried":
+			var have: Array = inks.carried()
+			pot = have.pick_random() if not have.is_empty() else "plain"
+		if best < 0 or not spend_ink(best, pot):
 			break
 
 
@@ -1649,6 +1805,9 @@ func _draw_under(d: Node2D) -> void:
 		var fp = pages.where(fr)
 		if fp != null and view.grow(30.0).has_point(fp):
 			SiteFx.draw_page(d, fp, String(fr.where), pages.seen(fr, player.position), time)
+	for dr in inks.drops:
+		if view.grow(20.0).has_point(dr.p):
+			Fx.drop(d, String(dr.ink), dr.p, time, clampf((float(GameData.Inks.DROP.life) - float(dr.t)) / 6.0, 0.0, 1.0))
 	if not ch.ui.get("map", false):
 		# A torn map scrap lying in the grass, with a slow glint.
 		var mp: Vector2 = GameData.MAP_SCRAP
@@ -1664,6 +1823,8 @@ func _draw_under(d: Node2D) -> void:
 	for z in zones:
 		var f: float = minf(1.0, minf((1.0 - z.t / z.life) * 3.0, z.t * 4.0 + 0.3))
 		Fx.zone(d, String(z.el), z.p, z.r, time, f, float(z.get("sd", 0.0)))
+		if String(z.get("mark", "")) != "":
+			Fx.mark(d, String(z.mark), z.p, z.r, time)
 	if decoy_t > 0.0:
 		# The smear of ink a grown Sidestep leaves behind.
 		var k: float = decoy_t / float(GameData.HAND_GROWTH.sidestep.decoy_time)
@@ -1674,13 +1835,21 @@ func _draw_under(d: Node2D) -> void:
 
 func _draw_over(d: Node2D) -> void:
 	for pj in projectiles:
-		Fx.bolt(d, String(pj.el), pj.p, pj.v, time, pj.src == "ally")
+		Fx.bolt(d, String(pj.el), pj.p, pj.v, time, pj.src == "ally", float(pj.get("size", 1.0)), String(pj.get("mark", "")))
 	for c in chains:
 		var al := minf(1.0, c.t * 6.0)
+		var cw: float = float(c.get("w", 1.0))
+		var cm: String = String(c.get("mark", ""))
 		if c.wide:
-			d.draw_line(c.a, c.b, Color(c.col, al * 0.4), 6.0)
+			d.draw_line(c.a, c.b, Color(c.col, al * 0.4), 6.0 * cw)
+			if cm == "heavy":
+				d.draw_line(c.a, c.b, Color(C.ink, al * 0.5), 2.0)
+			elif cm == "pale":
+				d.draw_line(c.a, c.b, Color(InkRules.color("pale"), al * 0.7), 9.0 * cw)
 		else:
-			d.draw_polyline(Ink.jag(c.a, c.b), Color(c.col, al), 2.5)
+			d.draw_polyline(Ink.jag(c.a, c.b), Color(c.col, al), 2.5 * cw)
+			if cm != "":
+				d.draw_polyline(Ink.jag(c.a, c.b), Color(InkRules.color(cm), al * 0.6), 1.0)
 	for r in rings:
 		var k: float = r.t / r.life
 		if String(r.el) != "":
@@ -1943,6 +2112,13 @@ func dev_restore_nearest() -> void:
 		enemies.erase(g)
 	erasure.guardians.erase(best.id)
 	erasure.restore(String(best.id))
+
+
+## Designer button (F1): every vial full (The Unwritten, Phase 3).
+func dev_fill_vials() -> void:
+	for ink in GameData.Inks.INKS:
+		ch.vials[ink] = int(GameData.Inks.INKS[ink].cap)
+	unlock("vials")
 
 
 func lure_for(e) -> Vector2:

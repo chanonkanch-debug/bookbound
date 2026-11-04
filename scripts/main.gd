@@ -358,6 +358,9 @@ func _autotest() -> void:
 	print("The Unwritten (Phase 2):")
 	await _test_unwritten(w)
 	Game.world = keep_world
+	print("The Unwritten (Phase 3): monster inks and branching growth:")
+	await _test_inks(w)
+	Game.world = keep_world
 	print("Saves (Phase 2):")
 	_test_migration()
 	print("Autotest finished with %d failure(s). Level %d, enemies alive %d" % [failures, w.ch.level, w.enemies.size()])
@@ -941,6 +944,337 @@ func _test_unwritten(main_w) -> void:
 	await get_tree().process_frame
 
 	Game.settings = keep_settings
+	Game.ch = keep
+	main_w.visible = true
+	main_w.hud.visible = true
+	await get_tree().process_frame
+
+
+# ================================================================ The Unwritten, Phase 3: inks
+
+## True if `t` has no digits in it (players never see numbers).
+func _no_digits(t: String) -> bool:
+	for c in t:
+		if c >= "0" and c <= "9":
+			return false
+	return true
+
+
+## A book character whose page i is at `lvl`, for the branch tests.
+func _ink_char(el: String, thick: String, lvls: Array) -> Dictionary:
+	var c := _book_char(el, "stillness")
+	c.thick = thick
+	c.spells = []
+	var idx: Array = [0, 1, 2]
+	for k in lvls.size():
+		c.spells.append({"i": idx[k], "lvl": int(lvls[k]), "inks": [], "branch": []})
+		for j in int(lvls[k]) - 1:
+			c.spells[k].inks.append("plain")
+	c.ink = 30
+	c.ui.vials = true
+	c.journal_ids.first_kill = true
+	return c
+
+
+## How many projectiles a cast of page i makes, and the first one.
+func _cast_count(w, i: int) -> Array:
+	w.projectiles.clear()
+	w.perform(Game.spell_stats(w.ch.spells[i]), w.player.position + Vector2(200, 0), "player", 1.0)
+	return [w.projectiles.size(), w.projectiles[0] if not w.projectiles.is_empty() else {}]
+
+
+func _test_inks(main_w) -> void:
+	var keep: Dictionary = Game.ch
+	main_w.set_process(false)
+	main_w.visible = false
+	main_w.hud.visible = false
+	var I = GameData.Inks
+	var IR = preload("res://scripts/world/inks.gd")
+
+	# -- The data: every monster has its ink, every kind of spell its branches
+	var from := {}
+	for k in I.INKS:
+		from[String(I.INKS[k].from)] = k
+	_check(from.get("Inkling") == "quick" and from.get("Blot") == "heavy" and from.get("Smudge Knight") == "stubborn" and from.get("guardian") == "pale",
+		"Inklings leave quick ink, Blots heavy, Knights stubborn, and guardians the rare pale")
+	var kinds_ok := true
+	for kind in ["bolt", "chain", "nova", "zone", "wall", "dash"]:
+		for ink in ["quick", "heavy", "stubborn"]:
+			var b: Dictionary = I.BRANCHES.get(kind, {}).get(ink, {})
+			kinds_ok = kinds_ok and String(b.get("name", "")) != "" and String(b.get("line", "")) != "" and _no_digits(String(b.line))
+		kinds_ok = kinds_ok and String(I.PALE.get(kind, {}).get("margin", "")) != "" and String(I.PALE[kind].get("name", "")) != ""
+	_check(kinds_ok, "bolt, chain, nova, zone, wall and dash each branch three ways (named, with a line) and have one pale branch")
+	var every_spell := true
+	for el in GameData.SPELLS:
+		for sp in GameData.SPELLS[el]:
+			every_spell = every_spell and I.BRANCHES.has(IR.kind_of(sp))
+	_check(every_spell and IR.kind_of(GameData.SPELLS.earth[2]) == "wall", "every spell has a branch table (Rampart grows as a wall)")
+	var hands_ok := true
+	for mv in ["jab", "shove", "sidestep"]:
+		for ink in ["quick", "heavy", "stubborn"]:
+			hands_ok = hands_ok and I.HAND_BRANCHES.get(mv, {}).has(ink)
+	_check(hands_ok, "Jab, Shove and Sidestep can each be dipped in quick, heavy or stubborn ink")
+
+	# -- Drops and vials
+	Game.ch = _bare_char(2)
+	Game.ch.journal_ids.first_kill = true
+	Game.ch.ui.journal = true
+	var w = await _side_world()
+	var inks = w.inks
+	var e = _spawn_at(w, 0, w.player.position + Vector2(300, 0))
+	for k in 80:
+		if not inks.drops.is_empty():
+			break
+		inks.on_kill(e)
+	_check(not inks.drops.is_empty() and String(inks.drops[0].ink) == "quick", "an Inkling that comes apart can leave a drop of quick ink")
+	var dr: Dictionary = inks.drops[0]
+	inks.drops = [dr]
+	dr.p = w.player.position + Vector2(float(I.DROP.pull) - 10.0, 0)
+	var d0: float = dr.p.distance_to(w.player.position)
+	inks.tick(0.1)
+	_check(dr.p.distance_to(w.player.position) < d0, "a drop close by slides toward you")
+	for k in 30:
+		inks.tick(0.1)
+	_check(inks.dose("quick") == 1 and inks.drops.is_empty() and w.ch.ui.vials, "walking over it puts it in a vial, and the vials appear")
+	_check(w.ch.journal_ids.has("ink_first_drop") and w.ch.journal_ids.has("ink_quick"), "the journal notices the first drop, and what the quick ink is like")
+	w.ch.vials.quick = int(I.INKS.quick.cap)
+	inks.drops = [{"p": w.player.position, "ink": "quick", "t": 0.0}]
+	inks.tick(0.1)
+	_check(inks.drops.size() == 1 and inks.dose("quick") == int(I.INKS.quick.cap), "a full vial leaves new drops lying")
+	var gd = _spawn_at(w, 0, w.player.position + Vector2(300, 0))
+	gd.guardian = "bare_stile"
+	inks.drops.clear()
+	inks.on_kill(gd)
+	_check(inks.drops.size() == 1 and String(inks.drops[0].ink) == "pale", "a guardian always leaves pale ink (until the book has had its pale)")
+	inks.pick_up(inks.drops[0])
+	_check(inks.dose("pale") == 1 and "pale" in inks.carried() and not "pale" in inks.dip_pots() and w.ch.journal_ids.has("ink_first_pale"),
+		"bare hands are never offered the pale: it waits for a book")
+	w.hud.refresh(DT)
+	_check(w.hud.vials.modulate.a >= 0.0 and _no_digits(w.hud.whisper.text), "the vials show how full they are, with no numbers")
+
+	# -- Bare hands steered by ink
+	w.ch.vials = {"quick": 0, "heavy": 2, "stubborn": 0, "pale": 1}
+	w.ch.hands.uses.jab = int(GameData.HAND_GROWTH.jab.at[0])
+	var plain_jab: Dictionary = Game.bare_stats(0)
+	w.finish_rest()
+	_check(inks.dip_waiting() == "jab" and w.rest_ui.visible, "when a move grows and you carry monster ink, the rest asks whether to dip your hands")
+	await get_tree().create_timer(4.5).timeout
+	_check(w.rest_ui.dipping and w.rest_ui.pots_box.visible and w.rest_ui.pots_row.get_child_count() == 1 and _no_digits(w.rest_ui.pots_lbl.text),
+		"the pots stand there (heavy only: never the pale), with no numbers")
+	w.rest_ui.dip_into("heavy")
+	var heavy_jab: Dictionary = Game.bare_stats(0)
+	_check(w.ch.hands.branch.jab == ["heavy"] and inks.dose("heavy") == 1 and float(heavy_jab.dmg) > float(plain_jab.dmg) * 1.2 and float(heavy_jab.read) > float(plain_jab.read),
+		"dipped in heavy ink, the Jab hits harder and reads slower")
+	_check(w.ch.journal_ids.has("dip_jab_heavy"), "and the journal says how it changed")
+	await get_tree().create_timer(0.7).timeout
+	w.ch.vials = {}
+	w.ch.hands.uses.shove = int(GameData.HAND_GROWTH.shove.at[0])
+	w.finish_rest()
+	_check(inks.dip_waiting() == "" and w.ch.hands.branch.shove == ["plain"], "with no monster ink, a growing move stays plain and nothing is asked")
+	await get_tree().create_timer(4.5).timeout
+	if w.rest_ui.visible:
+		w.rest_ui.close()
+	await get_tree().create_timer(0.7).timeout
+	w.queue_free()
+	await get_tree().process_frame
+
+	# -- Writing with a pot, and the first branch
+	Game.ch = _ink_char("fire", "thin", [3])
+	w = await _side_world()
+	inks = w.inks
+	w.ch.vials = {"quick": 3, "heavy": 3, "stubborn": 3, "pale": 1}
+	var plain_st: Dictionary = Game.spell_stats(w.ch.spells[0])
+	_check(w.spend_ink(0, "quick") and w.ch.spells[0].inks[-1] == "quick" and inks.dose("quick") == 2, "writing a level from the quick pot spends a dose and is remembered")
+	_check(w.ch.spells[0].branch == ["quick"] and Game.spell_name(w.ch.spells[0]).begins_with(String(I.BRANCHES.bolt.quick.name)),
+		"at the evolution the page branches toward the ink it was fed, and takes a new name (%s)" % Game.spell_name(w.ch.spells[0]))
+	var q_st: Dictionary = Game.spell_stats(w.ch.spells[0])
+	_check(float(q_st.read) < float(plain_st.read) and int(q_st.get("count", 0)) >= 1 and float(q_st.size) < 1.0, "quick: a shorter read, more and smaller shots")
+	_check(w.ch.journal_ids.has("first_branch") and w.ch.journal_ids.has("branch_bolt_quick"), "the journal notices the first branch")
+	# Heavy most used in the next window, with a quick in it too.
+	for pot in ["heavy", "quick", "heavy", "plain"]:
+		w.spend_ink(0, pot)
+	_check(w.ch.spells[0].branch == ["quick", "heavy"], "the next evolution takes the ink used most since the last one (heavy over quick)")
+	var h_st: Dictionary = Game.spell_stats(w.ch.spells[0])
+	_check(Game.spell_name(w.ch.spells[0]).begins_with(String(I.BRANCHES.bolt.heavy.name)) and float(h_st.size) > float(q_st.size) and float(h_st.get("push", 0.0)) > 0.0,
+		"heavy on top: bigger, and it knocks them back")
+	_check(IR.choose(["quick", "heavy"], false) == "heavy" and IR.choose(["heavy", "quick"], false) == "quick" and IR.choose(["plain", "plain"], false) == "plain",
+		"a tie goes to the newest ink, and plain ink alone makes a plain step")
+	# The pale.
+	for pot in ["plain", "pale", "stubborn", "stubborn"]:
+		w.spend_ink(0, pot)
+	_check(w.ch.spells[0].branch[-1] == "pale" and w.ch.pale_used and w.ch.disc.margins.has(String(I.PALE.bolt.margin)),
+		"any pale in an evolution makes it the pale branch, with a margin line")
+	_check(not "pale" in inks.pots() and Game.spell_name(w.ch.spells[0]).begins_with(String(I.PALE.bolt.name)), "after that the book won't take the pale again")
+	var g2 = _spawn_at(w, 0, w.player.position + Vector2(300, 0))
+	g2.guardian = "x"
+	inks.drops.clear()
+	inks.on_kill(g2)
+	_check(inks.drops.is_empty(), "and guardians stop leaving it")
+	w.queue_free()
+	await get_tree().process_frame
+
+	# -- Branches look and play differently (bolts)
+	Game.ch = _ink_char("earth", "thin", [8])
+	w = await _side_world()
+	w.ch.spells[0].branch = ["plain", "plain"]
+	var pl: Array = _cast_count(w, 0)
+	w.ch.spells[0].branch = ["quick", "quick"]
+	var qk: Array = _cast_count(w, 0)
+	w.ch.spells[0].branch = ["heavy", "heavy"]
+	var hv: Array = _cast_count(w, 0)
+	w.ch.spells[0].branch = ["stubborn", "stubborn"]
+	var sb: Array = _cast_count(w, 0)
+	_check(qk[0] > pl[0] and hv[0] < pl[0], "quick shots are more numerous, heavy ones fewer (%d / %d / %d)" % [qk[0], pl[0], hv[0]])
+	_check(float(qk[1].size) < 1.0 and float(hv[1].size) > 1.0 and qk[1].v.length() > pl[1].v.length() and hv[1].v.length() < pl[1].v.length(),
+		"quick shots are small and fast, heavy ones big and slow")
+	_check(int(sb[1].pierce) > int(pl[1].pierce) and float(sb[1].life) > float(pl[1].life) and String(sb[1].mark) == "stubborn", "stubborn shots pierce further and fly longer")
+	w.ch.spells[0].branch = ["pale", "plain"]
+	var pa: Array = _cast_count(w, 0)
+	w.player.position = Vector2(0, 300)
+	for k in 45:
+		w._update_projectiles(DT)
+	_check(bool(pa[1].turned) and pa[1].v.dot(w.player.position - pa[1].p) > 0.0, "a pale shot turns at the end of its flight and comes back")
+	w.queue_free()
+	await get_tree().process_frame
+
+	# -- Bursts: heavy throws further, stubborn guards you, pale pulls in
+	Game.ch = _ink_char("water", "medium", [5, 5])
+	Game.ch.spells[1].i = 1
+	w = await _side_world()
+	var far := {}
+	for b in ["plain", "heavy", "pale"]:
+		_clear(w)
+		w.player.position = Vector2(0, 400)
+		var t = _spawn_at(w, 1, w.player.position + Vector2(60, 0))
+		t.hp = 99999.0
+		t.max_hp = 99999.0
+		w.ch.spells[1].branch = [b]
+		w.perform(Game.spell_stats(w.ch.spells[1]), t.position, "player", 1.0)
+		for k in 20:
+			t.tick(DT)
+		far[b] = t.position.distance_to(w.player.position)
+	_check(far.heavy > far.plain and far.pale < far.plain, "a heavy burst throws them further; a pale one gathers them in (%d / %d / %d)" % [far.heavy, far.plain, far.pale])
+	w.ch.spells[1].branch = ["stubborn"]
+	w.guard_t = 0.0
+	w.perform(Game.spell_stats(w.ch.spells[1]), w.player.position, "player", 1.0)
+	var hp0: float = w.player.hp
+	w.hurt(20.0)
+	_check(w.guard_share() > 0.3 and hp0 - w.player.hp < 15.0, "a stubborn burst turns some harm aside after the cast")
+	var before_n: int = w.delayed.size()
+	w.perform(Game.spell_stats(w.ch.spells[1]), w.player.position, "player", 1.0)
+	_check(w.delayed.size() > before_n, "and comes back a second time")
+	w.queue_free()
+	await get_tree().process_frame
+
+	# -- Zones and walls
+	Game.ch = _ink_char("earth", "thick", [5, 5, 5])
+	w = await _side_world()
+	w.ch.spells[2].branch = ["pale"]
+	var cage_t = _spawn_at(w, 1, w.player.position + Vector2(140, 0))
+	w.perform(Game.spell_stats(w.ch.spells[2]), cage_t.position, "player", 1.0)
+	var cz: Dictionary = w.zones[-1]
+	cage_t.position = cz.p + Vector2(cz.r + 40.0, 0)
+	w._update_zones(DT)
+	_check(cz.p.distance_to(w.player.position) > 60.0 and cage_t.position.distance_to(cz.p) < cz.r, "a pale wall rises on the enemy, and it can't get out")
+	w.ch.spells[2].branch = ["stubborn"]
+	w.zones.clear()
+	w.perform(Game.spell_stats(w.ch.spells[2]), w.player.position, "player", 1.0)
+	_check(w.guard_share() > 0.2 and float(w.zones[-1].life) > float(GameData.SPELLS.earth[2].dur), "a stubborn wall lasts longer, and inside it blows come softer")
+	Game.ch.el = "fire"
+	w.ch.spells[2].branch = ["pale"]
+	w.zones.clear()
+	w.perform(Game.spell_stats(w.ch.spells[2]), w.player.position + Vector2(150, 0), "player", 1.0)
+	w.player.position += Vector2(0, 80)
+	w._update_zones(DT)
+	_check(w.zones[-1].p.distance_to(w.player.position) < 1.0, "a pale zone sits on you and walks with you")
+	w.queue_free()
+	await get_tree().process_frame
+
+	# -- Chains and dashes
+	Game.ch = _ink_char("lightning", "thin", [5])
+	w = await _side_world()
+	var a1 = _spawn_at(w, 1, w.player.position + Vector2(120, 0))
+	var a2 = _spawn_at(w, 1, w.player.position + Vector2(200, 0))
+	a1.hp = 99999.0
+	a2.hp = 99999.0
+	w.ch.spells[0].branch = ["stubborn"]
+	var n0: int = w.delayed.size()
+	w.perform(Game.spell_stats(w.ch.spells[0]), a1.position, "player", 1.0)
+	_check(w.delayed.size() >= n0 + 2, "a stubborn spark bites each of them again a moment later")
+	w.ch.spells[0].branch = ["pale"]
+	var hp_a1: float = a1.hp
+	w.chains.clear()
+	w.perform(Game.spell_stats(w.ch.spells[0]), a1.position, "player", 1.0)
+	_check(w.chains.any(func(c): return c.get("mark", "") == "pale" and c.b.distance_to(a1.position) < 1.0) and a1.hp < hp_a1, "a pale spark goes back to where it began")
+	Game.ch.el = "wind"
+	w.ch.spells[0].i = 1
+	_clear(w)
+	w.ch.spells[0].branch = ["pale"]
+	var start: Vector2 = w.player.position
+	w.perform(Game.spell_stats(w.ch.spells[0]), start + Vector2(150, 0), "player", 1.0)
+	_check(w.player.position.distance_to(start) > 100.0, "a dash still goes")
+	await _step(w, roundi(0.6 / DT))
+	_check(w.player.position.distance_to(start) < 5.0, "and a pale one pulls you back along the line")
+	w.ch.spells[0].branch = ["quick"]
+	_check(float(Game.spell_stats(w.ch.spells[0]).read) < float(GameData.SPELLS.wind[1].read), "a quick dash reads faster")
+	w.queue_free()
+	await get_tree().process_frame
+
+	# -- The rest screen, the book page and F1
+	Game.ch = _ink_char("fire", "medium", [3, 3])
+	Game.ch.spells[1].i = 2
+	Game.ch.journal_ids.first_kill = true
+	w = await _side_world()
+	w.ch.vials = {"quick": 0, "heavy": 2, "stubborn": 1}
+	w.ch.ink = 2
+	w.finish_rest()
+	await get_tree().create_timer(1.8).timeout
+	_check(w.rest_ui.writing and w.rest_ui.pots_box.visible and w.rest_ui.pots_row.get_child_count() == 3, "at a rest the pots stand above the pages: the book's own ink, then heavy and stubborn")
+	w.rest_ui.pick_pot("heavy")
+	_check(_no_digits(w.rest_ui.pots_lbl.text) and w.rest_ui.pots_lbl.text.to_lower().contains(String(I.INKS.heavy.name)), "the chosen pot is named, without numbers")
+	w.rest_ui.write_into(0)
+	_check(w.ch.spells[0].branch == ["heavy"] and w.ch.spells[0].inks[-1] == "heavy", "writing from the heavy pot grows that page the heavy way")
+	w.rest_ui.pick_pot("stubborn")
+	w.rest_ui.write_into(1)
+	_check(w.rest_ui.pot == "plain" and w.ch.spells[1].branch == ["stubborn"], "a vial that runs dry falls back to the book's own ink")
+	w.rest_ui.close()
+	await get_tree().create_timer(0.7).timeout
+	w.open_book()
+	await get_tree().process_frame
+	var paths := 0
+	var words_ok := true
+	var found_written := false
+	for c in w.book.left.get_children():
+		if c.get_script() != null and c.has_method("_draw") and c.get("path") != null:
+			paths += 1
+		if c is Label:
+			words_ok = words_ok and (_no_digits(c.text) or c.text.contains("'s book"))
+			found_written = found_written or c.text.contains(String(I.LINES.written_head))
+	_check(paths == 2 and found_written, "the open book draws each page's branch path and says what it was written in")
+	_check(words_ok, "no numbers on the book page")
+	w.book.close()
+	_check(w.inks.designer_text().contains("Monster inks") and w.inks.designer_text().contains("path"), "F1 shows the vials, every page's path and what its next step would take")
+	var keys: Array = preload("res://scripts/ui/pause_menu.gd").key_lines(w.ch)
+	_check(keys.any(func(r): return r[3] == "vials"), "the key page lists choosing an ink once you carry some")
+
+	# -- Saves
+	Game.save_game()
+	var back: Dictionary = Game.load_game()
+	_check(back.spells[0].branch == ["heavy"] and int(back.vials.heavy) == 1 and back.spells[0].inks.size() == 3, "saving and loading keeps the vials, the inks written and the branches")
+	var old := _book_char("earth", "echo")
+	old.spells = [{"i": 0, "lvl": 6}, {"i": 2, "lvl": 9}]
+	old.erase("vials")
+	old.erase("pale_used")
+	old.ui.erase("vials")
+	old.hands.erase("branch")
+	old.save_version = 5
+	var mig: Dictionary = Game.migrate(old.duplicate(true))
+	_check(int(mig.save_version) == 6 and mig.vials == {} and not mig.pale_used and mig.ui.vials == false
+		and mig.spells[0].branch == ["plain"] and mig.spells[1].branch == ["plain", "plain"] and mig.spells[1].inks.size() == 8,
+		"an older save gains empty vials, and every evolution it already had is a plain step")
+	w.queue_free()
+	await get_tree().process_frame
+
 	Game.ch = keep
 	main_w.visible = true
 	main_w.hud.visible = true

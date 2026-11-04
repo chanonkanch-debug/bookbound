@@ -119,6 +119,12 @@ func _draw() -> void:
 			draw_circle(Vector2(-6 + i * 6, r + drip), 1.6, Color(C.ink, strain * (1.0 - drip / 14.0)))
 	if dodge_t > 0.0:
 		draw_arc(Vector2.ZERO, r + 4.0, 0, TAU, 24, Color(C.paper, 0.8), 2.0)
+	var guard: float = w.guard_share()
+	if guard > 0.0:
+		# The Unwritten, Phase 3: stubborn ink stands in front of you, a double rule.
+		var gc: Color = GameData.Inks.INKS.stubborn.color
+		draw_arc(Vector2.ZERO, r + 6.0, 0, TAU, 28, Color(gc, 0.4 + guard), 1.3)
+		draw_arc(Vector2.ZERO, r + 9.0, 0, TAU, 28, Color(gc, 0.3 + guard), 1.3)
 	if bound:
 		var cs = w.casting
 		var cost: float = cs.page_cost()
