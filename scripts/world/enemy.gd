@@ -248,8 +248,8 @@ func _draw() -> void:
 	if state == "windup":
 		match behavior:
 			"charge":
-				var len := float(f.charge_speed) * float(f.charge_time)
-				draw_line(Vector2.ZERO, lunge * len, Color(C.danger, 0.12 + 0.25 * k), r * 1.6)
+				var length := float(f.charge_speed) * float(f.charge_time)
+				draw_line(Vector2.ZERO, lunge * length, Color(C.danger, 0.12 + 0.25 * k), r * 1.6)
 			"guard":
 				var reach: float = r + float(f.reach) + 12.0
 				var a0 := face.angle() - float(f.arc) / 2.0

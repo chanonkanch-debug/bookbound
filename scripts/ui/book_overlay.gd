@@ -50,21 +50,21 @@ func _ready() -> void:
 	right.add_theme_constant_override("separation", 10)
 	pages.add_child(right)
 
-	var close := Button.new()
-	close.text = "Close the book"
-	close.theme_type_variation = "PrimaryButton"
-	close.focus_mode = Control.FOCUS_NONE
-	close.size_flags_horizontal = Control.SIZE_SHRINK_END
-	close.pressed.connect(close_book)
-	v.add_child(close)
+	var close_btn := Button.new()
+	close_btn.text = GameData.BOOK_TEXT.close
+	close_btn.theme_type_variation = "PrimaryButton"
+	close_btn.focus_mode = Control.FOCUS_NONE
+	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+	close_btn.pressed.connect(close_book)
+	v.add_child(close_btn)
 	UiTheme.fit(self, ui_root)
 
 
-func _label(text: String, size: int, col: Color, center := false) -> Label:
+func _label(text: String, font_size: int, col: Color, center := false) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", col)
 	if center:
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -85,7 +85,7 @@ func open(awakened_now: bool) -> void:
 		var mark := "▸" if i == w.casting.page else "•"
 		left.add_child(_label("%s  %s" % [mark, Game.spell_name(s)], 15, C.ink))
 	if int(ch.ink) > 0:
-		left.add_child(_label("There is ink to write with. Rest.", 14, C.ink_soft))
+		left.add_child(_label(GameData.BOOK_TEXT.ink_waiting, 14, C.ink_soft))
 	# Margin notes: hidden-chapter hints and spell secrets, once they've appeared.
 	var m: Array = w.all_margins()
 	if not m.is_empty() and ch.ui.get("margins", false):
@@ -96,7 +96,7 @@ func open(awakened_now: bool) -> void:
 	var a: Dictionary = ch.aspect
 	if a.awakened:
 		var as_: Dictionary = GameData.ASPECTS[a.id]
-		right.add_child(_label("HIDDEN CHAPTER", 12, C.ink_soft, true))
+		right.add_child(_label(GameData.BOOK_TEXT.awakened_head, 12, C.ink_soft, true))
 		right.add_child(_label(as_.name, 40, C.gilt, true))
 		right.add_child(_label(String(as_.get("told", as_.effect)), 15, C.ink, true))
 		if awakened_now:
@@ -106,11 +106,11 @@ func open(awakened_now: bool) -> void:
 			right.modulate.a = 1.0
 	elif a.stage >= 4:
 		right.modulate.a = 1.0
-		right.add_child(_label("Not like this.", 28, Color(C.ink_soft, 0.6), true))
-		right.add_child(_label("The last page is blank, but the ink is moving.", 14, C.ink_soft, true))
+		right.add_child(_label(GameData.BOOK_TEXT.not_yet, 28, Color(C.ink_soft, 0.6), true))
+		right.add_child(_label(GameData.BOOK_TEXT.moving, 14, C.ink_soft, true))
 	else:
 		right.modulate.a = 1.0
-		right.add_child(_label("The last page is blank.", 16, Color(C.ink_soft, 0.7), true))
+		right.add_child(_label(GameData.BOOK_TEXT.blank, 16, Color(C.ink_soft, 0.7), true))
 	visible = true
 
 

@@ -104,6 +104,10 @@ const BARE_HANDS := [
 	{"name": "Sidestep", "move": "sidestep", "kind": "dash", "dmg": 14.0, "read": 0.05, "over": 0.0, "mana": 3.0, "dash_len": 130.0, "use_w": 1.6},
 ]
 const BARE_DMG_PER_LEVEL := 0.15
+# The Unwritten, Phase 1: share of a kill's XP you get before the ceremony. Once people found
+# resting, the first-hour bots reached the ceremony after only 3 to 7 minutes, before the
+# bare-hands growth had time to happen. 1.0 = as before.
+const BARE_XP_MULT := 0.6
 
 # Sticking with a style pays off. Each move gets up to MASTERY_MAX extra damage,
 # shared out by how much of your fighting time went into it. Someone who only jabs
@@ -189,15 +193,17 @@ const FOCUS := {"strength": 2.5}
 
 # Vague journal lines, shown at level-ups before the ceremony for the element you lean
 # toward most (a different line each level). Never show numbers to players.
+# Journal lines are the player's own voice (first person). Margin notes and the book's own
+# words speak to the player ("you"). Phase 1 of The Unwritten rewrote these into first person.
 const LEAN_HINTS := {
-	"fire": ["Your fists remember the heat of a long combo.", "You don't let go once you start. Something warm approves.", "The air shimmers when you refuse to back off."],
-	"water": ["The way you push them back feels like a tide.", "You keep the fight at arm's length, like a current around a stone.", "They never quite reach you. Something cool approves."],
-	"earth": ["You stood your ground. The ground noticed.", "You took the hits and stayed. Something old and heavy approves.", "When they crowd you, you only grow steadier."],
-	"wind": ["Your feet are quicker than your hands. Something likes that.", "You never stand still long enough to be caught.", "A breeze follows you from fight to fight."],
-	"lightning": ["You jump from foe to foe like a spark looking for a path.", "They drop fast when you strike. The air crackles.", "You never hit the same thing twice if you can help it."],
+	"fire": ["My fists remember the heat of a long fight.", "Once I start, I don't let go. Something warm approves.", "The air shimmers when I refuse to back off."],
+	"water": ["The way I push them back feels like a tide.", "I keep the fight at arm's length, like a current round a stone.", "They never quite reach me. Something cool approves."],
+	"earth": ["I stood my ground. The ground noticed.", "I took the blows and stayed. Something old and heavy approves.", "When they crowd me, I only grow steadier."],
+	"wind": ["My feet are quicker than my hands. Something likes that.", "I never stand still long enough to be caught.", "A breeze follows me from fight to fight."],
+	"lightning": ["I jump from one to the next like a spark looking for a path.", "They drop fast when I strike. The air crackles.", "I never hit the same thing twice if I can help it."],
 }
-const LEAN_TORN := "Two feelings pull at you, and neither will let go."
-const LEAN_UNSURE := "Nothing in you has chosen a shape yet."
+const LEAN_TORN := "Two feelings pull at me, and neither will let go."
+const LEAN_UNSURE := "Nothing in me has chosen a shape yet."
 
 # ================================================================ Phase 1: deliberate combat
 # Casting is reading. Hold the cast key (Space or right mouse) to read the open page, release to cast.
@@ -305,6 +311,8 @@ const NUDGES := {
 	"rest_fire": {"after": 5.0, "glyph": "R"},
 	"book": {"after": 120.0, "glyph": "B"},               # you have a book and have never opened it
 	"journal": {"after": 45.0, "glyph": "J"},             # the journal is there and never opened
+	# The Unwritten, Phase 1: two of three first-hour bots never opened the map once they had it.
+	"map": {"after": 60.0, "glyph": "M"},                 # the map is there and never opened
 }
 const NUDGE_SHOW := 6.0          # seconds a nudge glyph stays
 
@@ -315,8 +323,8 @@ const JOURNAL := {
 	"first_death": "I fell, and woke by the Hearth. Something was taken from me.",
 	"hearth_return": "The Hearth is warm. Nothing follows me in here.",
 	"first_rest": "I sat a while, and the ache eased.",
-	"woke_stronger": "I woke stronger. The book is heavier.",
-	"woke_stronger_bare": "I woke stronger. My hands remember more than I do.",
+	"woke_stronger": "I woke, and the book was heavier.",
+	"woke_stronger_bare": "I woke. My hands remember more than I do.",
 	"ceremony_near": "The Hearth-keeper watched me rest. Something is waiting for me there.",
 	"ceremony_call": "Something at the Hearth is calling me home.",
 	"book_received": "The book is mine now. It will not let me put it down.",
@@ -542,6 +550,18 @@ const ASPECTS := {
 	},
 }
 const FINAL_HINT := "A blank page has appeared at the back of your book."
+# Words on the book's pages and the ceremony card (The Unwritten, Phase 1: no game terms).
+const BOOK_TEXT := {
+	"awakened_head": "WRITTEN AT THE BACK",
+	"blank": "The last page is blank.",
+	"not_yet": "Not like this.",
+	"moving": "The last page is blank, but the ink is moving.",
+	"ink_waiting": "There is ink to write with. Rest.",
+	"close": "Close the book",
+	"ceremony_heads": ["ITS BINDING", "ITS WEIGHT", "WHAT IS WRITTEN IN IT"],
+	"ceremony_knows": "It seems to know you already. You remember writing:",
+	"ceremony_ink": "The ink you gathered bare-handed is waiting. Rest, and write it into your pages.",
+}
 
 
 # ================================================================ Bare hands: learning by fighting

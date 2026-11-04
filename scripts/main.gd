@@ -295,6 +295,7 @@ func _autotest() -> void:
 			break
 	_check(broke, "taking a hit can break a read")
 	# Monsters telegraph: an Inkling next to you winds up before it bites.
+	_clear(w)   # no lingering zone from the casts above may stagger it
 	w.spawn(true)
 	var foe = w.enemies[0]
 	foe.position = w.player.position + Vector2(30, 0)
@@ -376,6 +377,7 @@ func _test_migration() -> void:
 
 
 func _clear(w) -> void:
+	w.spawn_t = 60.0   # no new monster wanders into the middle of a test
 	for e in w.enemies:
 		e.queue_free()
 	w.enemies.clear()
@@ -444,7 +446,7 @@ func _test_discoveries(w) -> void:
 			pool = pt
 			break
 	var a = _spawn_at(w, 0, pool.p + Vector2(-8, 0))
-	var b = _spawn_at(w, 0, pool.p + Vector2(pool.r * 0.6, pool.r * 0.4))
+	var _b = _spawn_at(w, 0, pool.p + Vector2(pool.r * 0.6, pool.r * 0.4))
 	var far = _spawn_at(w, 0, pool.p + Vector2(0, -pool.r * 0.7))
 	w.player.position = pool.p + Vector2(-pool.r - 120.0, 0)
 	var hp_far: float = far.hp
@@ -640,6 +642,14 @@ func _test_polish(main_w) -> void:
 	for f in roundi(float(GameData.NUDGES.rest_fire.after) / DT) + 10:
 		w._update(DT)
 	_check(Game.ch.nudged.get("rest", false), "with a level waiting, sitting by the Hearth fire shows the R nudge")
+	Game.ch.ui.map = true
+	Game.ch.opened.erase("map")
+	w.nudge_t = 0.0
+	for f in roundi(float(GameData.NUDGES.map.after) / DT) + 10:
+		w._update(DT)
+	_check(Game.ch.nudged.get("map", false), "a map that was never opened gets an M nudge")
+	w.designer._refresh()
+	_check(w.designer.text.text.contains("Pacing and feel") and w.designer.text.text.contains("map ✓"), "F1 shows the Phase 1 pacing values")
 	var lurker = _spawn_at(w, 0, Vector2(GameData.TOWN_RADIUS + 30.0, 0))
 	lurker.aggro = true
 	_check(w.can_rest(), "nothing can wake you inside the Hearth")

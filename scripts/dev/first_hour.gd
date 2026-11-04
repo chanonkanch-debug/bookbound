@@ -316,8 +316,8 @@ func _menus() -> void:
 		_learn("journal", "J")
 	if Game.has_book() and (ch.nudged.get("book", false) or P.tries_keys):
 		_learn("book", "B")
-	if ch.ui.get("map", false) and P.tries_keys:
-		_learn("map", "M")
+	if ch.ui.get("map", false) and (P.tries_keys or ch.nudged.get("map", false)):
+		_learn("map", "nudge" if ch.nudged.get("map", false) else "M")
 	if clock < next_read or wd.player.dead_t > 0.0 or _engaged():
 		return
 	next_read = clock + float(P.reads) * randf_range(0.7, 1.3)

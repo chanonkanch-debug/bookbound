@@ -340,3 +340,133 @@ book feels like the answer to something you watched build. It reads the same sco
 - There's no nudge for the new keys 4 to 6 yet. The journal line and the new mark on the stance bar
   are the only hints.
 - Knights live far out, so Brace will be rare before the ceremony. That's on purpose: it's a reward for exploring.
+
+---
+
+# The Unwritten
+
+The milestone after the slow-RPG work. Eight phases, each stopped for the owner's okay.
+Numbers for each phase are in their own block at the end of `scripts/data/game_data.gd`
+(search for "The Unwritten, Phase").
+
+## The Unwritten, Phase 1: polish what exists
+
+The first hour, minute by minute, and what was fixed in it, is in `docs/FIRST_HOUR.md`.
+
+### New designer tools
+
+| command | what it does |
+|---|---|
+| `-- --firsthour [--persona=careful\|curious\|bold] [--seed=N] [--minutes=N]` | a new-player bot that only uses what it would have found; prints a timeline, a minute-by-minute table and quiet stretches (`scripts/dev/first_hour.gd`) |
+| `-- --balance --only=books\|bare\|chapters\|firsthour [--el=fire] [--runs=N]` | one part of the balance bot |
+| `-- --showcase` | screenshots of every element, wind-up and reading state (needs a screen or `xvfb-run`) |
+| `-- --stress` | the heaviest scene, timed (`scripts/dev/showcase.gd`) |
+
+### Tuning for the first hour (`NUDGES`, `BARE_XP_MULT`, `HAND_REST_MAX`, `CHAPTER_TUNING.hint_gap`, `MONSTERS.hearth_give_up`)
+
+See `FIRST_HOUR.md` for why each one exists. In short: resting is found in the first two
+minutes instead of after 17 to 35; the ceremony moved from 4 to 7 minutes (bot) to 7 to 11;
+hints, growth lines and whispers come one at a time.
+
+`BARE_XP_MULT = 0.6`: before the book, XP from everything is multiplied by this. The
+bare-hands balance bot now takes these times to Lv 5 (4 runs each, seconds):
+
+| style | before | now |
+|---|---|---|
+| brawler | 425 to 809 | 1101 |
+| spreader | 202 to 519 | 524 |
+| controller | 383 to 655 | 646 |
+| skirmisher | 436 to 452 | 777 |
+| anchor | 201 to 690 | 513 |
+| mixed | 414 to 451 | 587 |
+
+("before" is the range between the old version and Phase 1 without the multiplier; four runs
+are noisy.) The spread between the fastest and slowest style went from about 3.4 times to
+about 2.1 times. Brawler is now the slowest; it also dies the most along with skirmisher.
+
+### Readability (`READABILITY`, `scripts/util/element_fx.gd`)
+
+- Every element has its own shape and motion, not only colour: fire licks upward with
+  rising embers, water is round drops and smooth ripples, earth is heavy angular blocks
+  that barely move, wind is spinning crescents and spirals, lightning is zigzags that redraw
+  every frame. Bolts, zones and bursts all follow this.
+- Monster wind-ups: a ring that closes in on the monster as the bite comes.
+- Reading: a faint full ring shows how long the read is; the progress line fills it; a flash
+  when it's ready; a second, breathing ring while overcharging; a broken read is a split ring
+  with a red slash; a fizzle scatters letters.
+- Low ink: the book in your hand goes hollow with a red edge when this page costs more than
+  you have, and the stance rim turns into a red dashed line.
+- Low health: a slow heartbeat darkens the screen edges below `low_hp_pulse`.
+
+### Feel (`FEEL`)
+
+- Hit-pause: the world stops for `hitstop_time` when your hit takes `hitstop_frac` of a
+  monster's health or more, when you take `hitstop_hurt` damage or more, and on the Last Page.
+  On by default, because it's very short.
+- Screen shake: off by default (it fought the quiet mood). When on, it shakes for tier-2
+  kills, for taking `shake_hurt` damage or more, and for the Last Page.
+- Splatters linger: `splat_life` seconds, `kill_splat_life` for kills, at most `splat_max`.
+- Page turn: the page lifts and folds over (`page_turn_lift`).
+- The world rules (`World._update`) never see hit-pause or shake, so tests and bots are
+  unaffected by either setting.
+
+### Controls and the pause menu (`PAUSE`, `KEY_PAGE`, `SETTINGS`, `UI_SCALES`)
+
+- Gamepad: left stick moves, right stick aims, A reads, Y rests, shoulders turn pages,
+  left trigger is the Last Page, D-pad up is the journal, D-pad down the map, Back opens the
+  book, Start pauses. X is kept for talking (Phase 5).
+- Esc or Start closes whatever is open, or opens the pause menu: back to the world,
+  settings, what my hands know (the key page), rest here and leave (saves and quits).
+- The key page is drawn like a page of the book and only lists controls you've found
+  (`KEY_PAGE` rows say when each appears), so it never gives a secret away.
+- Settings, saved in `user://settings.cfg`: hit-pause, shake, UI size (four steps, named in
+  words), and show numbers (off; for testing).
+
+### The sweep
+
+Tested by `--autotest` (85 checks now):
+- Dying while reading cancels the read.
+- Resting twice during the ceremony shows the ceremony once.
+- A chapter waking mid-read cancels the read and gives the ink back.
+- Holding the read key through a page change doesn't cast again.
+- Save and load at every interface unlock stage, with and without a book.
+- The pause menu, key page, settings, UI scale, hit-pause on and off, gamepad bindings.
+- Every GDScript warning was fixed; the warnings check treats them as errors.
+
+Save version stays 4: Phase 1 adds no saved state except new keys inside existing records
+(`nudged.map`, `opened.map`), which load as missing and default to false.
+
+### The voice pass (`JOURNAL`, `LEAN_*`, `BOOK_TEXT`)
+
+Rule: the journal is the character's own hand, first person, past tense, no game words
+(level, XP, mana, damage). Margins are the book speaking, second person or bare
+instruction. The lean lines and the open-book text were rewritten to match, and the open
+book's text moved into `BOOK_TEXT`.
+
+### Book balance after Phase 1
+
+Phase 1 changes no spell, so the book table should match the version before it. It does,
+within the noise of four runs. Region averages (seconds): old 85 / 110 / 160, now
+82 / 113 / 164. Per element, compared with the average of all fifteen books:
+
+| element | Fields | Marsh | Reach |
+|---|---|---|---|
+| fire | +7% | +1% | +13% |
+| water (8 runs) | +2% | +1% | -6% |
+| earth | +6% | +15% | +15% |
+| wind (8 runs) | +7% | -15% | -20% |
+| lightning | -5% | -9% | -7% |
+
+Wind is a little fast later on, and was before Phase 1 too (-15% and -22%). Single books
+swing by up to 30% between runs of four, so the `!` marks in one run aren't meaningful on
+their own. Left as it is; Phase 3 (monster inks) changes the fights anyway, and the table
+will be re-run then.
+
+### Deferred or not quite right yet (The Unwritten, Phase 1)
+
+- **Quiet stretches after minute 20.** Content, not tuning. Phases 2, 3, 5 and 6.
+- **No nudge for keys 4 to 6** (learned moves). Kept as a reward for looking.
+- **Drawing speed on a real graphics card** wasn't measured (the test machine has none).
+  Run `-- --stress` without `--headless` on a real computer.
+- **The first kill writes four lines at once.** They're queued now, so each can be read.
+- **The bots fight better than people**, so their times are the fastest a person would see.

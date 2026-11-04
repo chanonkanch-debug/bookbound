@@ -105,12 +105,12 @@ func _ready() -> void:
 	(continue_btn if continue_btn.visible else begin).call_deferred("grab_focus")
 
 
-func _label(text: String, size: int, col: Color, wrap := false) -> Label:
+func _label(text: String, font_size: int, col: Color, wraps := false) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", col)
-	if wrap:
+	if wraps:
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return l
 

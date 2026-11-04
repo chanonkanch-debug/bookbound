@@ -115,10 +115,10 @@ func _theme() -> Theme:
 	return t
 
 
-func _label(text: String, size: int, col: Color) -> Label:
+func _label(text: String, font_size: int, col: Color) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", col)
 	return l
 
@@ -183,21 +183,21 @@ static func key_lines(ch: Dictionary) -> Array:
 	var pages: int = (Game.bare_moves(ch).size() if bare else ch.get("spells", []).size())
 	for row in GameData.KEY_PAGE:
 		var cond: String = row[3]
-		var show := false
+		var listed := false
 		match cond:
 			"always":
-				show = true
+				listed = true
 			"pages":
-				show = pages > 1 and (not bare or ch.ui.get("hands", false))
+				listed = pages > 1 and (not bare or ch.ui.get("hands", false))
 			"learned":
-				show = bare and not ch.get("hands", {}).get("learned", []).is_empty()
+				listed = bare and not ch.get("hands", {}).get("learned", []).is_empty()
 			"rested":
-				show = ch.get("rested", false) or ch.get("nudged", {}).get("rest", false)
+				listed = ch.get("rested", false) or ch.get("nudged", {}).get("rest", false)
 			"lastpage":
-				show = not bare and ch.aspect.get("awakened", false) and ch.aspect.get("id", "") == "lastpage"
+				listed = not bare and ch.aspect.get("awakened", false) and ch.aspect.get("id", "") == "lastpage"
 			_:
-				show = ch.get("ui", {}).get(cond, false)
-		if show:
+				listed = ch.get("ui", {}).get(cond, false)
+		if listed:
 			out.append(row)
 	return out
 

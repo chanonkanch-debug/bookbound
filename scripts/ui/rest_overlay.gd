@@ -53,8 +53,8 @@ class PageView extends Control:
 				var a := 1.0
 				if k == int(s.lvl) - 1 and grow_t > 0.0:
 					a = 1.0 - grow_t
-				var len := r.size.x - 40.0 - float((k * 37) % 30)
-				draw_line(Vector2(26, y), Vector2(26 + len * a, y), Color(col, 0.85), 2.0)
+				var length := r.size.x - 40.0 - float((k * 37) % 30)
+				draw_line(Vector2(26, y), Vector2(26 + length * a, y), Color(col, 0.85), 2.0)
 			else:
 				draw_line(Vector2(26, y), Vector2(r.size.x - 14, y), Color(C.rule, 0.5), 1.0)
 

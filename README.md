@@ -25,18 +25,19 @@ The first time you open it, Godot spends a few seconds importing. That's normal.
 
 ### Controls
 
-| Action | Keys |
-|---|---|
-| Move | WASD or arrow keys, or hold the left mouse button on the map |
-| Read (cast) | Hold Space or the right mouse button, release to cast. Aims at the mouse (or where you face) |
-| Turn the page | 1, 2, 3 to go to a page, Q / E or the mouse wheel for one page back / forward |
-| Bare hands, before your book | The same keys: 1 Jab, 2 Shove, 3 Sidestep, then hold Space. Moves you learn from monsters go on 4, 5, 6 |
-| Hidden spell (if you unlock it) | Hold 4 |
-| Open your book | B (Esc or B to close) |
-| Rest (writes your levels) | Hold R in a safe spot, or press R once at a campfire |
-| Journal / map, once you have them | J / M |
-| Designer view (spoilers) | F1 |
-| Screenshot | F12 |
+| Action | Keys | Gamepad |
+|---|---|---|
+| Move | WASD or arrow keys, or hold the left mouse button on the map | Left stick |
+| Read (cast) | Hold Space or the right mouse button, release to cast. Aims at the mouse (or where you face) | Hold A, aim with the right stick |
+| Turn the page | 1, 2, 3 to go to a page, Q / E or the mouse wheel for one page back / forward | Shoulder buttons |
+| Bare hands, before your book | The same keys: 1 Jab, 2 Shove, 3 Sidestep, then hold Space. Moves you learn from monsters go on 4, 5, 6 | The same |
+| Hidden spell (if you unlock it) | Hold 4 | Left trigger |
+| Open your book | B (Esc or B to close) | Back |
+| Rest (writes your levels) | Hold R in a safe spot, or press R once at a campfire | Y |
+| Journal / map, once you have them | J / M | D-pad up / down |
+| Pause menu (settings, controls, quit) | Esc | Start |
+| Designer view (spoilers) | F1 | |
+| Screenshot | F12 | |
 
 The screen starts empty on purpose: things appear as you need them. Levels are only written when you rest.
 Casting takes time now: hold to read, release too early and it fizzles, hold longer to charge it.
@@ -70,6 +71,8 @@ scripts/
   game.gd                  Rolls books (with leaning), works out spell stats, saves and loads
   main.gd                  Switches between creation, the world and the ceremony; also the self-test
   dev/balance.gd           The balance bot (see below)
+  dev/first_hour.gd        The first-hour bot: plays like a new player (--firsthour)
+  dev/showcase.gd          Screenshots of every effect (--showcase) and the speed test (--stress)
   rite/rite_screen.gd      Character creation (name and background, bare hands)
   rite/ceremony_screen.gd  The Book Ceremony: the book reveal (first Hearth rest at Lv 5)
   world/world.gd           The field: spawning, spells, damage, element combos, drawing effects
@@ -89,7 +92,9 @@ scripts/
   ui/map_overlay.gd        The hand-drawn map (M), once you've found it
   ui/book_cover.gd         Draws a book cover (used by both rite screens)
   ui/ui_theme.gd           Colours and button styles
+  ui/pause_menu.gd         Esc / Start: settings, the key page, quit
   util/ink.gd              Drawing helpers for the ink-blob look
+  util/element_fx.gd       How each element looks: shape and motion as well as colour
 ```
 
 Everything is drawn with code (circles, blobs, lines), so there are no art files yet.
@@ -122,6 +127,15 @@ godot --headless --path . -- --autotest
 ```
 
 If it prints `Autotest finished`, the game logic works end to end.
+
+Other designer runs (all with `godot --headless --path . -- ...`):
+
+| command | what it does |
+|---|---|
+| `--firsthour` | three bots play their first hour like new players; prints a timeline (see `docs/FIRST_HOUR.md`) |
+| `--balance --only=books --el=wind --runs=8` | one part of the balance bot (`books`, `bare`, `chapters`, `firsthour`) |
+| `--stress` | times the busiest scene the game allows (16.7 ms per frame is 60 FPS) |
+| `--showcase` | screenshots of every element and reading state (run without `--headless`) |
 
 ### Balance bot
 

@@ -103,9 +103,9 @@ const ELS := ["fire", "water", "earth", "wind", "lightning"]
 ## "temper" is the hidden temperament (see LEAN in game_data.gd).
 func new_character(char_name: String, bg: String) -> Dictionary:
 	var temper := {}
-	var tr: Array = GameData.LEAN.temperament
+	var t_range: Array = GameData.LEAN.temperament
 	for k in ELS:
-		temper[k] = randf_range(tr[0], tr[1])
+		temper[k] = randf_range(t_range[0], t_range[1])
 	return {
 		"name": char_name if char_name != "" else "Arin", "bg": bg,
 		"el": "", "thick": "", "pages": 0, "spells": [],

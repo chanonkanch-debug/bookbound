@@ -126,9 +126,9 @@ class Dock extends Control:
 				var q := 0.25 + ln * 0.22
 				draw_line(Vector2(spine_x, r.position.y).lerp(Vector2(spine_x, r.end.y), q), top.lerp(bot, q), Color(el, 0.35), 1.0)
 		# One dot per page, the open one filled.
-		var n: int = cs.page_count()
-		for i in n:
-			var dp := c + Vector2((i - (n - 1) / 2.0) * 14.0, bh / 2.0 + 12.0)
+		var n_pages: int = cs.page_count()
+		for i in n_pages:
+			var dp := c + Vector2((i - (n_pages - 1) / 2.0) * 14.0, bh / 2.0 + 12.0)
 			if i == cs.page and not turning:
 				draw_circle(dp, 4.0, el)
 			else:
@@ -249,14 +249,14 @@ func _ignore(c: Control) -> Control:
 	return c
 
 
-func _label(text: String, size: int, col: Color, align := HORIZONTAL_ALIGNMENT_LEFT, wrap := false) -> Label:
+func _label(text: String, font_size: int, col: Color, align := HORIZONTAL_ALIGNMENT_LEFT, wraps := false) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.horizontal_alignment = align
-	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", col)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if wrap:
+	if wraps:
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return l
 

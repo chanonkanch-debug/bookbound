@@ -224,6 +224,7 @@ func _process(delta: float) -> void:
 		if map_ui.visible:
 			map_ui.close_map()
 		elif not paused and ch.ui.get("map", false):
+			ch.opened.map = true
 			map_ui.open()
 	elif Input.is_action_just_pressed("ui_cancel"):
 		close_overlays()
@@ -682,6 +683,9 @@ func kill(e, src: String) -> void:
 
 ## XP is earned quietly. Levels are only written when you rest (see finish_rest).
 func gain_xp(n: int) -> void:
+	if not Game.has_book():
+		# Before the book, kills teach a little less, so the bare-hands arc has room to happen.
+		n = maxi(1, roundi(n * float(GameData.BARE_XP_MULT)))
 	ch.xp += n
 
 
@@ -1459,6 +1463,7 @@ func _tick_nudges(dt: float) -> void:
 		"rest_fire": not ch.rested and near_campfire() and Game.pending_level() > int(ch.level) and can_rest(),
 		"book": Game.has_book() and not o.get("book", false),
 		"journal": ch.ui.get("journal", false) and not o.get("journal", false),
+		"map": ch.ui.get("map", false) and not o.get("map", false),
 	}
 	for id in conds:
 		if not conds[id] or ch.nudged.get(id, false) or (id == "rest_fire" and ch.nudged.get("rest", false)):
@@ -1719,8 +1724,8 @@ func _draw_rest(d: Node2D) -> void:
 func _draw_nudge(d: Node2D) -> void:
 	if nudge_t <= 0.0 or nudge_id == "":
 		return
-	var show: float = float(GameData.NUDGE_SHOW)
-	var a: float = minf(1.0, minf(nudge_t, show - nudge_t) / 0.8) * 0.55
+	var show_t: float = float(GameData.NUDGE_SHOW)
+	var a: float = minf(1.0, minf(nudge_t, show_t - nudge_t) / 0.8) * 0.55
 	var g: String = GameData.NUDGES[nudge_id].glyph
 	var f := ThemeDB.fallback_font
 	var tw: float = f.get_string_size(g, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
