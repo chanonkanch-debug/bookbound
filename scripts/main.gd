@@ -156,6 +156,8 @@ func _autotest() -> void:
 		if String(t.s).is_valid_int():
 			texts_with_digits += 1
 	_check(texts_with_digits == 0, "no damage numbers in normal play")
+	print("Bare hands growth:")
+	await _test_hands(w)
 	print("Rest (Phase 2):")
 	w.auto_rest_ui = true
 	w.gain_xp(1400)
@@ -424,4 +426,100 @@ func _test_discoveries(w) -> void:
 	_check(GameData.SECRETS.Spark.line in w.all_margins(), "the secret is written into the margins")
 	var dv: String = w.discovery.designer_text()
 	_check(dv.contains("✓ Spark") and dv.contains("· Gust"), "F1 lists discovered and undiscovered secrets")
+	_clear(w)
+
+
+func _turn_and_read(w, page: int, aim: Vector2, hold: float) -> String:
+	w.casting.turn_to(page)
+	await _step(w, 30)
+	w.bot_aim = aim
+	w.player.mana = Game.max_mana()
+	return await _read(w, hold)
+
+
+func _test_hands(w) -> void:
+	var keep_signals: Dictionary = Game.ch.signals.duplicate()
+	var keep_auto: bool = w.auto_rest_ui
+	w.auto_rest_ui = true
+	_clear(w)
+	w.player.hp = Game.max_hp()
+	var home: Vector2 = w.player.position
+	# Learn a move from a monster: dodge an Inkling's strike enough times, then rest.
+	var ink = _spawn_at(w, 0, home + Vector2(40, 0))
+	for k in int(GameData.HAND_LESSONS.Inkling.need):
+		w.player.dodge_t = 0.3
+		w.enemy_strike(ink)
+	_check(not w.hands.knows("flank"), "a lesson isn't learned until you rest")
+	w.finish_rest()
+	_check(w.hands.knows("flank") and w.casting.page_count() == 4, "after a rest, dodging Inklings has taught Flank Step (a 4th stance)")
+	_check(GameData.HAND_LESSONS.Inkling.line in Game.ch.journal, "the journal says so: \"%s\"" % GameData.HAND_LESSONS.Inkling.line)
+	# Flank Step circles behind the monster.
+	_clear(w)
+	w.player.position = home
+	var foe = _spawn_at(w, 0, home + Vector2(110, 0))
+	foe.spd = 0.0
+	await _turn_and_read(w, 3, foe.position, 0.4)
+	_check(w.player.position.x > home.x + 110.0 and foe.hp < foe.max_hp, "Flank Step ends behind the monster and hits it")
+	# Growth: enough meaningful Jabs and the next rest makes every Jab land twice.
+	Game.ch.hands.uses.jab = int(GameData.HAND_GROWTH.jab.at[0])
+	w.finish_rest()
+	_check(w.hands.tier("jab") == 1 and GameData.HAND_GROWTH.jab.lines[0] in Game.ch.journal, "enough real Jabs grow the Jab at the next rest")
+	_clear(w)
+	w.player.position = home
+	foe = _spawn_at(w, 0, home + Vector2(45, 0))
+	foe.spd = 0.0
+	foe.hp = 5000.0
+	foe.max_hp = 5000.0
+	w.casting.turn_to(0)
+	await _step(w, 30)
+	w.bot_aim = foe.position
+	w.read_held = true
+	await _step(w, roundi(GameData.BARE_HANDS[0].read / DT) + 2)
+	w.read_held = false
+	await _step(w, 2)
+	var after_first: float = foe.hp
+	await _step(w, 12)
+	_check(foe.hp < after_first and after_first < foe.max_hp, "a grown Jab lands a second time")
+	# Sidestep grows a decoy that monsters bite instead of you.
+	Game.ch.hands.tier.sidestep = 1
+	_clear(w)
+	w.player.position = home
+	await _turn_and_read(w, 2, home + Vector2(200, 0), 0.2)
+	_check(w.decoy_t > 0.0 and w.decoy_p.distance_to(home) < 5.0, "a grown Sidestep leaves an ink decoy where you stood")
+	var biter = _spawn_at(w, 0, w.decoy_p + Vector2(-20, 0))
+	var hp0: float = w.player.hp
+	w.player.dodge_t = 0.0
+	w.enemy_strike(biter)
+	_check(w.player.hp == hp0 and w.decoy_t <= 0.0, "a monster closer to the decoy bites it instead of you")
+	# Brace, learned from a Knight: blows from the front glance off.
+	Game.ch.hands.learned.append("brace")
+	_clear(w)
+	w.player.position = home
+	var knight = _spawn_at(w, 2, home + Vector2(60, 0))
+	knight.aggro = false
+	await _turn_and_read(w, 4, knight.position, 0.4)
+	hp0 = w.player.hp
+	w.enemy_strike(knight)
+	_check(w.brace_t > 0.0 and hp0 - w.player.hp < knight.dmg * 0.3 and knight.state == "stagger", "Brace turns a blow from the front aside, and the attacker reels")
+	# A hand secret: Sidestep then Jab is a backhand.
+	_clear(w)
+	var b = _spawn_at(w, 1, home + Vector2(40, 0))
+	w.last_move = "sidestep"
+	w.last_move_t = w.time
+	w.hit(b, 10.0, "none", "player", "jab")
+	_check(w.hands.found("backhand") and GameData.HAND_SECRETS.backhand.line in Game.ch.journal, "a hand secret (Sidestep, then Jab) goes in the journal")
+	# Hands tint toward the leaning element.
+	Game.ch.signals = {"chain": 40.0, "streak_kill": 10.0}
+	var tint: Color = w.hands.tint()
+	_check(tint.a > 0.0 and tint.is_equal_approx(Color(GameData.COLORS.fire, tint.a)), "your fist tints toward the element you lean to (fire here)")
+	_check(w.designer.has_method("toggle") and w.hands.designer_text().contains("Flank Step"), "F1 lists lessons, growth and hand secrets")
+	# Put things back for the rest of the test.
+	Game.ch.signals = keep_signals
+	Game.ch.hands = Game._hands_fields()
+	w.decoy_t = 0.0
+	w.brace_t = 0.0
+	w.bot_aim = null
+	w.casting.turn_to(0)
+	await _step(w, 30)
+	w.auto_rest_ui = keep_auto
 	_clear(w)

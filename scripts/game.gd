@@ -47,6 +47,7 @@ func _setup_input() -> void:
 		"move_up": [_key(KEY_W), _key(KEY_UP)], "move_down": [_key(KEY_S), _key(KEY_DOWN)],
 		"move_left": [_key(KEY_A), _key(KEY_LEFT)], "move_right": [_key(KEY_D), _key(KEY_RIGHT)],
 		"page_1": [_key(KEY_1)], "page_2": [_key(KEY_2)], "page_3": [_key(KEY_3)], "cast_4": [_key(KEY_4)],
+		"page_5": [_key(KEY_5)], "page_6": [_key(KEY_6)],
 		"page_prev": [_key(KEY_Q), _mouse(MOUSE_BUTTON_WHEEL_UP), _pad(JOY_BUTTON_LEFT_SHOULDER)],
 		"page_next": [_key(KEY_E), _mouse(MOUSE_BUTTON_WHEEL_DOWN), _pad(JOY_BUTTON_RIGHT_SHOULDER)],
 		"read": [_key(KEY_SPACE), _mouse(MOUSE_BUTTON_RIGHT), _pad(JOY_BUTTON_A)],
@@ -117,7 +118,12 @@ func _phase2_fields() -> Dictionary:
 		"left_hearth": false,
 		"opened": {},              # controls used at least once ("book", "journal", "page"...)
 		"disc": {"seen": {}, "known": {}, "terrain": {}, "secrets": {}, "margins": []},   # Phase 3 discoveries
+		"hands": _hands_fields(),  # bare hands growth (lessons, learned moves, growth, secrets)
 	}
+
+
+func _hands_fields() -> Dictionary:
+	return {"lessons": {}, "learned": [], "uses": {}, "tier": {}, "secrets": {}}
 
 
 func has_book(c: Dictionary = ch) -> bool:
@@ -189,7 +195,7 @@ func move_shares(c: Dictionary = ch) -> Dictionary:
 	for k in use:
 		total += float(use[k])
 	var out := {}
-	for m in GameData.BARE_HANDS:
+	for m in bare_moves(c):
 		out[m.move] = float(use.get(m.move, 0.0)) / total if total > 0.0 else 0.0
 	return out
 
@@ -307,9 +313,17 @@ func max_spell_level() -> int:
 	return int(GameData.THICKNESS[ch.thick].max_level)
 
 
+## The moves your bare hands know: the basic three, then any learned from monsters.
+func bare_moves(c: Dictionary = ch) -> Array:
+	var out: Array = GameData.BARE_HANDS.duplicate()
+	for m in c.get("hands", {}).get("learned", []):
+		out.append(GameData.LEARNED_MOVES[m])
+	return out
+
+
 ## Final numbers for bare-hands move i (before the ceremony).
 func bare_stats(i: int) -> Dictionary:
-	var st: Dictionary = GameData.BARE_HANDS[i].duplicate()
+	var st: Dictionary = bare_moves()[i].duplicate()
 	st.el = "none"
 	st.tier = 0
 	var mastery: float = GameData.MASTERY_MAX * float(move_shares().get(st.move, 0.0))
@@ -402,6 +416,11 @@ func migrate(d: Dictionary) -> Dictionary:
 		if not d.has("disc"):
 			d.disc = {"seen": {}, "known": {}, "terrain": {}, "secrets": {}, "margins": []}
 		d.save_version = 3
+	if v < 4:
+		# Bare hands growth starts empty.
+		if not d.has("hands"):
+			d.hands = _hands_fields()
+		d.save_version = 4
 	return d
 
 

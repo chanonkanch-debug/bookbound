@@ -333,7 +333,7 @@ const GIVE_UP_TEXT := "Close this book forever"
 const GIVE_UP_CONFIRM := "Press again to give up this book"
 
 # Saves. Bump SAVE_VERSION when the save format changes and add a step in Game.migrate().
-const SAVE_VERSION := 3
+const SAVE_VERSION := 4
 # Hidden settings, saved in user://settings.cfg. show_numbers brings back a small readout
 # (for testing and accessibility). Toggle it in the F1 designer view.
 const SETTINGS := {"show_numbers": false}
@@ -522,3 +522,68 @@ const ASPECTS := {
 	},
 }
 const FINAL_HINT := "A blank page has appeared at the back of your book."
+
+
+# ================================================================ Bare hands: learning by fighting
+# Before the book, your hands grow in four ways. Rules in world/hands.gd.
+
+# 1. Learn moves from monsters. Every time you dodge a monster's strike (Sidestep through it)
+#    or interrupt its wind-up, you've "watched" it once. After `need` lessons from one kind of
+#    monster, your next rest writes its move into your hands, and it becomes a new stance
+#    (keys 4 to 6, or Q/E). `line` is the journal line when learned.
+const HAND_LESSONS := {
+	"Inkling": {"move": "flank", "need": 4,
+		"line": "I watched the small ones circle. My feet know the way round now."},
+	"Blot": {"move": "rush", "need": 3,
+		"line": "The marsh things gather themselves, then go. I can do that too."},
+	"Smudge Knight": {"move": "brace", "need": 2,
+		"line": "The knights turn their shoulder to a blow. I tried it, and it held."},
+}
+# The learned moves. Same fields as BARE_HANDS. Special fields:
+#   flank  circles to the far side of the nearest enemy near the aim, hitting it from behind
+#          (behind_mult) and always interrupting it
+#   rush   a long read, then a straight charge that knocks everything aside (push)
+#   brace  no damage: for brace_time seconds, blows from the front (brace_arc, radians) are
+#          mostly turned aside (brace_guard) and the attacker reels (brace_stagger)
+const LEARNED_MOVES := {
+	"flank": {"name": "Flank Step", "move": "flank", "kind": "dash", "dmg": 20.0, "read": 0.2, "over": 0.0, "mana": 5.0,
+		"dash_len": 120.0, "reach": 170.0, "behind_mult": 1.6, "use_w": 1.6},
+	"rush": {"name": "Bull Rush", "move": "rush", "kind": "dash", "dmg": 46.0, "read": 0.9, "over": 0.5, "mana": 8.0,
+		"dash_len": 230.0, "push": 260.0, "use_w": 3.0},
+	"brace": {"name": "Brace", "move": "brace", "kind": "brace", "dmg": 0.0, "read": 0.25, "over": 0.0, "mana": 4.0,
+		"brace_time": 2.5, "brace_arc": 2.2, "brace_guard": 0.85, "brace_stagger": 1.2, "use_w": 1.0},
+}
+
+# 2. Moves that visibly grow. Only meaningful use counts:
+#    jab       a Jab that lands on a monster that's hunting you
+#    shove     a Shove that catches at least one monster
+#    sidestep  a Sidestep that slips through a strike or a monster
+# At each count in `at`, your next rest grows the move one step (two steps in all):
+#    Jab       1: every Jab lands twice (second_hit of the damage)   2: every third Jab on the same monster knocks it back and staggers it
+#    Shove     1: what it catches reels (stagger seconds)            2: wider (radius_mult) and harder (push_mult)
+#    Sidestep  1: leaves an ink decoy monsters chase (decoy_time)    2: slipping through a winding-up monster breaks its wind-up
+const HAND_GROWTH := {
+	"jab": {"at": [30, 90], "second_hit": 0.45, "third_knock": 220.0, "third_stagger": 0.8,
+		"lines": ["My fist comes back before I've thought about it. Twice, now.", "The third blow lands like a door slamming."]},
+	"shove": {"at": [12, 36], "stagger": 0.7, "radius_mult": 1.35, "push_mult": 1.4,
+		"lines": ["They stagger when I push them, as if they'd forgotten where they were.", "My push carries further. The grass bends with it."]},
+	"sidestep": {"at": [8, 24], "decoy_time": 1.6, "decoy_r": 10.0,
+		"lines": ["When I step aside, a smear of me stays behind. They bite at it.", "I step through them as they gather, and they lose the thread."]},
+}
+
+# 3. Hand secrets: small combos, written into the journal the first time they happen.
+#    backhand  a Jab within `window` s after a Sidestep: always interrupts, mult damage
+#    counter   a Jab that lands in the last `late` s of a monster's wind-up: long stagger
+#    tangle    a Shove that throws one monster into another: both reel (uses the Undertow crash rule)
+#    untouched three Jabs on one monster without being hurt in between: the third splashes ink
+#              around it (splash_r, splash of the damage)
+const HAND_SECRETS := {
+	"backhand": {"window": 0.7, "mult": 1.5, "line": "Step aside, then strike back: they never see it coming."},
+	"counter": {"late": 0.25, "stagger": 1.6, "line": "I struck just as it moved, and it forgot what it meant to do."},
+	"tangle": {"window": 0.6, "dmg": 18.0, "stagger": 1.0, "line": "Pushed into each other, they tangle like wet string."},
+	"untouched": {"count": 3, "splash_r": 70.0, "splash": 0.5, "line": "Three clean blows, and the third one splashed. Like ink from a pen."},
+}
+
+# 4. Your hands take on the colour of the element your fighting leans toward.
+#    It starts once that element's share is above an even split by `start`, and is full at `full`.
+const HAND_TINT := {"start": 0.04, "full": 0.25, "max_alpha": 0.85}

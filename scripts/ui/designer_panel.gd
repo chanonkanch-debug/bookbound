@@ -117,12 +117,14 @@ func _refresh() -> void:
 			s += "%d · %s Lv %d/%d · %s · %d dmg · %d ink · read %.2fs (+%.2fs overcharge)\n" % [
 				i + 1, Game.spell_name(sl), sl.lvl, Game.max_spell_level(), GameData.KIND_LABEL[st.kind], roundi(st.dmg), roundi(st.mana), float(st.read), float(st.over)]
 	else:
-		for i in GameData.BARE_HANDS.size():
+		for i in Game.bare_moves().size():
 			var st: Dictionary = Game.bare_stats(i)
 			s += "%d · %s · %d dmg · %d ink · read %.2fs · honed +%d%%\n" % [i + 1, st.name, roundi(st.dmg), roundi(st.mana), float(st.read), roundi(100.0 * float(st.mastery))]
 	s += _hidden_chapter() if Game.has_book() else _lean()
 	if w.get("discovery") != null:
 		s += w.discovery.designer_text()
+	if w.get("hands") != null:
+		s += w.hands.designer_text()
 	s += _sec("Journal (%d lines)" % ch.get("journal", []).size())
 	for l in ch.get("journal", []):
 		s += "[color=#%s]· %s[/color]\n" % [soft, l]
