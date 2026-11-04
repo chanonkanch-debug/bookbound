@@ -322,6 +322,8 @@ func _autotest() -> void:
 		_shot("test_6_book")
 	w.book.close()
 	await _step(w, 30)
+	print("Discoveries (Phase 3):")
+	await _test_discoveries(w)
 	print("Saves (Phase 2):")
 	_test_migration()
 	print("Autotest finished with %d failure(s). Level %d, enemies alive %d" % [failures, w.ch.level, w.enemies.size()])
@@ -342,3 +344,84 @@ func _test_migration() -> void:
 	_check(d.el == "earth" and d.thick == "medium" and int(d.level) == 9 and d.spells.size() == 2 and int(d.spells[0].lvl) == 6, "the migrated save keeps its book and levels")
 	_check(d.aspect.id == "echo" and int(d.aspect.progress) == 5 and d.aspect.margins.size() == 2, "the migrated save keeps hidden-chapter progress")
 	_check(d.ui.book and d.ui.journal and d.ui.margins and not d.ui.map, "an old player's interface starts unlocked (except the map)")
+
+
+func _clear(w) -> void:
+	for e in w.enemies:
+		e.queue_free()
+	w.enemies.clear()
+	w.zones.clear()
+	w.projectiles.clear()
+
+
+func _spawn_at(w, tier: int, p: Vector2):
+	var e = preload("res://scripts/world/enemy.gd").new()
+	e.setup(w, tier, p)
+	w.actors.add_child(e)
+	w.enemies.append(e)
+	return e
+
+
+func _spell(el: String, i: int) -> Dictionary:
+	var st: Dictionary = GameData.SPELLS[el][i].duplicate()
+	st.el = el
+	st.tier = 0
+	return st
+
+
+func _test_discoveries(w) -> void:
+	# Content counts.
+	var aff_ok := true
+	for foe in GameData.FOES:
+		if GameData.AFFINITIES.get(foe.name, {}).size() < 2:
+			aff_ok = false
+	_check(aff_ok, "every monster type has at least 2 affinities")
+	var sec_ok := true
+	for el in GameData.SPELLS:
+		for sp in GameData.SPELLS[el]:
+			if not GameData.SECRETS.has(sp.name):
+				sec_ok = false
+	_check(sec_ok and GameData.SECRETS.size() == 15, "every spell has a secret (15)")
+	_check(GameData.TERRAIN_LINES.size() >= 4 and GameData.TERRAIN.patches.size() == 4, "4 kinds of ground react to elements")
+	# Terrain: an Ember Bolt fired across dry grass sets it alight.
+	_clear(w)
+	w.paused = false
+	var grass: Dictionary = {}
+	for pt in w.terrain.patches:
+		if pt.kind == "grass":
+			grass = pt
+			break
+	w.player.position = grass.p + Vector2(-grass.r - 60.0, 0)
+	w.perform(_spell("fire", 0), grass.p, "player", 1.0)
+	await _step(w, 20)
+	var burning := false
+	for z in w.zones:
+		if String(z.st.get("name", "")) == "grass fire":
+			burning = true
+	_check(burning and grass.burnt > 0.0, "fire on dry grass starts a burning zone")
+	_check(GameData.TERRAIN_LINES.grass_fire in Game.ch.journal, "the journal writes it down once: \"%s\"" % GameData.TERRAIN_LINES.grass_fire)
+	# Affinity: after seeing Blots flinch from fire a few times, it's in the bestiary.
+	_clear(w)
+	var blot = _spawn_at(w, 1, w.player.position + Vector2(200, 0))
+	for k in int(GameData.DISCOVERY.affinity_seen):
+		w.hit(blot, 1.0, "fire", "player")
+	_check(w.discovery.knows("Blot", "fire") and GameData.AFFINITIES.Blot.fire.line in w.discovery.bestiary_lines(), "a seen affinity reaches the bestiary")
+	_check(w.discovery.mira_bonus(blot, "water") > 0.0, "Mira favors showing an untaught reaction")
+	# Spell secret: a Spark into a puddle arcs to everything standing in it.
+	_clear(w)
+	var pool: Dictionary = {}
+	for pt in w.terrain.patches:
+		if pt.kind == "puddle":
+			pool = pt
+			break
+	var a = _spawn_at(w, 0, pool.p + Vector2(-8, 0))
+	var b = _spawn_at(w, 0, pool.p + Vector2(pool.r * 0.6, pool.r * 0.4))
+	var far = _spawn_at(w, 0, pool.p + Vector2(0, -pool.r * 0.7))
+	w.player.position = pool.p + Vector2(-pool.r - 120.0, 0)
+	var hp_far: float = far.hp
+	w.perform(_spell("lightning", 0), a.position, "player", 1.0)
+	_check(w.discovery.found("Spark") and far.hp < hp_far, "Spark into a puddle reaches everything in it (a spell secret)")
+	_check(GameData.SECRETS.Spark.line in w.all_margins(), "the secret is written into the margins")
+	var dv: String = w.discovery.designer_text()
+	_check(dv.contains("✓ Spark") and dv.contains("· Gust"), "F1 lists discovered and undiscovered secrets")
+	_clear(w)

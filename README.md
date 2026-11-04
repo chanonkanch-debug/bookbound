@@ -71,14 +71,21 @@ scripts/
   main.gd                  Switches between creation, the world and the ceremony; also the self-test
   dev/balance.gd           The balance bot (see below)
   rite/rite_screen.gd      Character creation (name and background, bare hands)
-  rite/ceremony_screen.gd  The Book Ceremony: the book reveal at Lv 3
+  rite/ceremony_screen.gd  The Book Ceremony: the book reveal (first Hearth rest at Lv 5)
   world/world.gd           The field: spawning, spells, damage, element combos, drawing effects
   world/player.gd          You: movement, healing at the Hearth
   world/enemy.gd           Ink monsters: wander, chase, bite
-  world/ally.gd            Mira, the AI stand-in for a second player
+  world/ally.gd            Mira, the AI stand-in for a second player (she quietly shows you things)
+  world/casting.gd         Casting by reading: hold, release, page turns, overcast, fizzles
+  world/terrain.gd         Ground patches that react to elements: grass, puddles, stones, open ground
+  world/discovery.gd       What you've learned: monster affinities, terrain, spell secrets
   world/hidden_chapter.gd  ★ The secret: progress, margin hints, awakening
   ui/hud.gd                Side panel, spell buttons, journal, designer view
   ui/book_overlay.gd       The open book you see when pressing B
+  ui/designer_panel.gd     F1: every number, plus everything found and not yet found
+  ui/journal_overlay.gd    The journal (J) and bestiary
+  ui/rest_overlay.gd       The page you write levels into while resting
+  ui/map_overlay.gd        The hand-drawn map (M), once you've found it
   ui/book_cover.gd         Draws a book cover (used by both rite screens)
   ui/ui_theme.gd           Colours and button styles
   util/ink.gd              Drawing helpers for the ink-blob look

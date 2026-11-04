@@ -43,6 +43,11 @@ var lunge := Vector2.ZERO    # locked direction of a Blot's charge
 var partner = null           # the other Inkling of a pair
 var side := 1.0              # which flank this Inkling takes
 var charge_hit := false
+var enraged_t := 0.0         # Phase 3: an enraging element makes it faster for a while
+var enrage_speed := 1.0
+var crash_t := 0.0           # Undertow secret: thrown, and will crash into the next one it touches
+var crash_dmg := 0.0
+var split_done := false
 
 
 func setup(world, t: int, pos: Vector2) -> void:
@@ -85,6 +90,8 @@ func tick(dt: float) -> void:
 	ally_hit -= dt
 	flash -= dt
 	state_t -= dt
+	enraged_t -= dt
+	crash_t -= dt
 	var p = w.player
 	var to_p: Vector2 = p.position - position
 	var d := to_p.length()
@@ -95,7 +102,7 @@ func tick(dt: float) -> void:
 		aggro = false
 		if state != "hunt" and state != "recover":
 			state = "hunt"
-	var s := spd * (slow_f if slow_t > 0.0 else 1.0)
+	var s := spd * (slow_f if slow_t > 0.0 else 1.0) * (enrage_speed if enraged_t > 0.0 else 1.0)
 	var v := Vector2.ZERO
 	var dir: Vector2 = to_p / d if d > 0.0 else Vector2.RIGHT
 	var gap: float = d - r - p.r   # distance between edges
@@ -250,6 +257,10 @@ func _draw() -> void:
 		draw_arc(Vector2.ZERO, r + 5.0, 0, TAU, 32, Color(C.water, 0.8), 2.0)
 	if slow_t > 0.0 and slow_f < 1.0:
 		draw_arc(Vector2.ZERO, r + 8.0, 0, TAU * 0.6, 24, Color(C.earth, 0.6), 1.5)
+	if enraged_t > 0.0:
+		for i in 4:
+			var a: float = w.time * 6.0 + i * PI / 2.0
+			draw_line(Vector2.from_angle(a) * (r + 3.0), Vector2.from_angle(a) * (r + 9.0), Color(C.danger, 0.8), 2.0)
 	var look: Vector2 = face * r * 0.3 + lean
 	var eye := r * (0.2 + 0.08 * k)
 	draw_circle(look + Vector2(-r * 0.32, -r * 0.15), eye, C.paper)

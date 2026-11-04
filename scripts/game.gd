@@ -116,6 +116,7 @@ func _phase2_fields() -> Dictionary:
 		"rested": false,
 		"left_hearth": false,
 		"opened": {},              # controls used at least once ("book", "journal", "page"...)
+		"disc": {"seen": {}, "known": {}, "terrain": {}, "secrets": {}, "margins": []},   # Phase 3 discoveries
 	}
 
 
@@ -396,6 +397,11 @@ func migrate(d: Dictionary) -> Dictionary:
 			d.rested = true
 			d.left_hearth = true
 		d.save_version = 2
+	if v < 3:
+		# Phase 3: discoveries (affinities seen, terrain, spell secrets) start empty.
+		if not d.has("disc"):
+			d.disc = {"seen": {}, "known": {}, "terrain": {}, "secrets": {}, "margins": []}
+		d.save_version = 3
 	return d
 
 

@@ -333,10 +333,112 @@ const GIVE_UP_TEXT := "Close this book forever"
 const GIVE_UP_CONFIRM := "Press again to give up this book"
 
 # Saves. Bump SAVE_VERSION when the save format changes and add a step in Game.migrate().
-const SAVE_VERSION := 2
+const SAVE_VERSION := 3
 # Hidden settings, saved in user://settings.cfg. show_numbers brings back a small readout
 # (for testing and accessibility). Toggle it in the F1 designer view.
 const SETTINGS := {"show_numbers": false}
+
+# ================================================================ Phase 3: learning by experimenting
+# Monster affinities. Hidden: each monster reacts to some elements in its own way.
+#   weak     takes `mult` damage from that element
+#   resists  takes `mult` damage from that element
+#   enraged  takes `mult` damage but moves `speed` times faster for `time` seconds
+#   special  something else happens (see `effect`): split, guard_break
+# A reaction is only written into the journal's bestiary once the player has seen it
+# DISCOVERY.affinity_seen times (from any source, including Mira).
+const AFFINITIES := {
+	"Inkling": {
+		"fire": {"type": "weak", "mult": 1.3, "line": "The small ones burn quickly."},
+		"water": {"type": "resists", "mult": 0.75, "line": "The small ones drink water and are none the worse."},
+		"wind": {"type": "enraged", "mult": 1.25, "speed": 1.5, "time": 4.0, "line": "Wind only makes the small ones angrier, and easier to break."},
+	},
+	"Blot": {
+		"fire": {"type": "weak", "mult": 1.3, "line": "The marsh things flinch from fire."},
+		"earth": {"type": "resists", "mult": 0.75, "line": "Stone sinks into the marsh things and does little."},
+		"water": {"type": "special", "effect": "split", "below": 0.6, "line": "Water splits the marsh things in two."},
+	},
+	"Smudge Knight": {
+		"lightning": {"type": "weak", "mult": 1.3, "line": "Lightning runs through the knights' armour."},
+		"fire": {"type": "resists", "mult": 0.75, "line": "The knights do not feel the heat."},
+		"earth": {"type": "special", "effect": "guard_break", "stagger": 1.4, "line": "Stone breaks a knight's guard and turns it around."},
+		"wind": {"type": "enraged", "mult": 1.25, "speed": 1.5, "time": 3.0, "line": "Wind makes the knights charge, and leaves them open."},
+	},
+}
+
+const DISCOVERY := {
+	"affinity_seen": 4,          # times a reaction must be seen before the journal writes it down
+}
+
+# The world reacts to elements. Ground patches, drawn in ink, laid out the same every game.
+#   count = how many, r = radius range, band = distance range from the Hearth
+const TERRAIN := {
+	"seed": 7,
+	"patches": {
+		"grass": {"count": 16, "r": [45.0, 85.0], "band": [230.0, 800.0]},
+		"puddle": {"count": 14, "r": [40.0, 80.0], "band": [560.0, 1200.0]},
+		"stone": {"count": 12, "r": [40.0, 75.0], "band": [950.0, 1480.0]},
+		"open": {"count": 10, "r": [70.0, 120.0], "band": [250.0, 1450.0]},
+	},
+	"grass_fire": {"dmg": 6.0, "player_dmg": 3.0, "dur": 6.0, "tick": 0.5, "regrow": 90.0},
+	"puddle_grow": 1.4,          # water zones and bursts grow this much in or on a puddle; water bolts hit this much harder
+	"stone_last": 2.0,           # earth zones placed on stones last this many times longer
+	"open_reach": 1.5,           # wind bolts fly, wind zones reach and wind dashes go this much further from open ground
+	"breeze": 14.0,              # px/s that burning ground and fire zones drift with the wind
+	"wind_carry": 90.0,          # px/s a fire zone is carried when a wind spell passes through it
+	"wind_carry_time": 2.0,
+}
+const TERRAIN_LINES := {
+	"grass_fire": "Flame catches the dry grass.",
+	"puddle_soak": "Anything that wades through the puddles comes out soaked.",
+	"puddle_grow": "Water spells swell where water already lies.",
+	"stone_last": "On the stones, the earth I raise stays longer.",
+	"open_reach": "Out in the open, the wind carries my spells further.",
+	"wind_carry": "The wind carries fire where it blows.",
+}
+
+# Spell secrets: one hidden extra behavior per spell, found by casting it in the right situation.
+# Not hidden chapters: smaller, and written into the margins as a short line when first seen.
+# The behavior itself happens every time the situation comes up. Numbers per secret are below.
+const SECRETS := {
+	"Ember Bolt": {"when": "hits a soaked enemy", "does": "leaves a cloud of steam that slows",
+		"line": "Fire on wet ink leaves a cloud that slows them.", "radius": 60.0, "dur": 3.0, "slow": 0.5},
+	"Flare Ring": {"when": "cast at full Heat", "does": "the ring keeps burning",
+		"line": "At full heat, the ring keeps burning.", "dur": 3.0, "dmg": 0.25},
+	"Pyre": {"when": "placed on another of your Pyres", "does": "they merge into one great fire",
+		"line": "Two pyres become one great fire.", "grow": 1.5, "last": 1.5},
+	"Tide Shot": {"when": "cast while you stand in a puddle", "does": "comes out as a wave of three",
+		"line": "From a puddle, the tide comes as a wave.", "spread": 0.3},
+	"Undertow": {"when": "throws one enemy into another", "does": "both reel",
+		"line": "The tide throws them into each other.", "window": 0.6, "stagger": 1.2, "dmg": 0.4},
+	"Still Pool": {"when": "placed on a puddle", "does": "holds whatever is inside almost still",
+		"line": "On standing water, the pool holds them fast.", "slow": 0.1},
+	"Stone Shard": {"when": "cast while you stand on stones", "does": "the shard is heavier and pierces further",
+		"line": "Stones lend the shard their weight.", "pierce": 3, "dmg": 1.3},
+	"Quake": {"when": "cast inside your own Rampart", "does": "echoes twice more",
+		"line": "Inside the wall, the quake echoes.", "echoes": 2, "gap": 0.4},
+	"Rampart": {"when": "raised on stones", "does": "becomes a wall nothing can enter",
+		"line": "Raised on stone, the rampart becomes a wall."},
+	"Gust": {"when": "hits an enemy standing in a puddle", "does": "sprays the water and soaks everything near",
+		"line": "Wind across water soaks them all.", "radius": 130.0},
+	"Cyclone Step": {"when": "passes through three or more enemies", "does": "leaves a whirlwind behind",
+		"line": "Through a crowd, the step leaves a whirlwind.", "count": 3, "dur": 3.0, "radius": 70.0},
+	"Vortex": {"when": "placed on open ground", "does": "walks toward the nearest enemy and lasts longer",
+		"line": "On open ground, the vortex walks.", "speed": 45.0, "last": 1.5},
+	"Spark": {"when": "its first target stands in a puddle", "does": "arcs to everything in that puddle",
+		"line": "In water, the spark finds them all."},
+	"Arc Nova": {"when": "cast while you stand in a puddle", "does": "reaches much further, and bites you too",
+		"line": "Standing in water, the nova reaches far, and bites back.", "grow": 1.8, "self_dmg": 0.15},
+	"Storm Rod": {"when": "strikes a soaked enemy", "does": "forks to every soaked enemy nearby",
+		"line": "The rod finds every wet thing nearby.", "range": 260.0, "dmg": 0.6},
+}
+
+# Mira teaches by example: she prefers targets that show the player a reaction or secret they
+# haven't found yet. Each weight is added to her score for a target (distance counts against it).
+const MIRA_TEACH := {
+	"untaught_affinity": 160.0,  # an enemy whose reaction to Mira's element the player hasn't learned
+	"soak_for_player": 120.0,    # soaking an enemy near the player when a "soaked" secret is undiscovered
+	"in_puddle": 100.0,          # an enemy in a puddle when a puddle secret is undiscovered
+}
 
 # ---------------------------------------------------------------- Backgrounds
 # Weights are added to a base of 1 per element, so nothing is ever impossible.

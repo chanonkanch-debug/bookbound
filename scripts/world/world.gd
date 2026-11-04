@@ -14,6 +14,8 @@ const EnemyScript := preload("res://scripts/world/enemy.gd")
 const AllyScript := preload("res://scripts/world/ally.gd")
 const HiddenChapter := preload("res://scripts/world/hidden_chapter.gd")
 const Casting := preload("res://scripts/world/casting.gd")
+const Terrain := preload("res://scripts/world/terrain.gd")
+const Discovery := preload("res://scripts/world/discovery.gd")
 const HudScript := preload("res://scripts/ui/hud.gd")
 const BookScript := preload("res://scripts/ui/book_overlay.gd")
 const DesignerScript := preload("res://scripts/ui/designer_panel.gd")
@@ -36,6 +38,8 @@ var player
 var ally
 var chapter
 var casting
+var terrain
+var discovery
 var hud
 var book
 var designer
@@ -127,6 +131,8 @@ func _ready() -> void:
 
 	chapter = HiddenChapter.new(self)
 	casting = Casting.new(self)
+	terrain = Terrain.new()
+	discovery = Discovery.new(self)
 	hud = HudScript.new()
 	hud.w = self
 	add_child(hud)
@@ -238,6 +244,8 @@ func _update(dt: float) -> void:
 
 	for e in enemies:
 		e.tick(dt)
+	terrain.tick(dt)
+	_terrain_effects(dt)
 	_separate_enemies()
 	_update_projectiles(dt)
 	_update_zones(dt)
@@ -321,18 +329,25 @@ func _separate_enemies() -> void:
 				var o := dv / d * (m - d) / 2.0
 				a.position -= o
 				b.position += o
+				if a.crash_t > 0.0 or b.crash_t > 0.0:
+					_crash(a, b)
 
 
 func _update_projectiles(dt: float) -> void:
 	for pj in projectiles:
 		pj.p += pj.v * dt
 		pj.life -= dt
+		if pj.el == "fire":
+			ignite_at(pj.p, 4.0)
+		elif pj.el == "wind":
+			_wind_through_fire(pj.p, pj.v)
 		for e in enemies:
 			if pj.life <= 0.0:
 				break
 			if e.dead or pj.hit.has(e.get_instance_id()):
 				continue
 			if pj.p.distance_to(e.position) < e.r + 5.0:
+				_secret_on_hit(e, pj.st, pj.src)
 				hit(e, pj.dmg, pj.el, pj.src, String(pj.st.get("move", "")))
 				pj.hit.append(e.get_instance_id())
 				var st: Dictionary = pj.st
@@ -357,10 +372,15 @@ func _update_zones(dt: float) -> void:
 		z.t += dt
 		z.tt -= dt
 		var st: Dictionary = z.st
+		_move_zone(z, dt)
 		for e in enemies:
 			if e.dead:
 				continue
 			var d: float = e.position.distance_to(z.p)
+			if z.get("wall", false) and d < z.r + e.r and d > 0.0:
+				# Rampart on stones: nothing gets in.
+				e.position = z.p + (e.position - z.p) / d * (z.r + e.r)
+				continue
 			if d < z.r + e.r:
 				if st.get("slow", 0.0) > 0.0:
 					e.slow_t = 0.3
@@ -369,11 +389,17 @@ func _update_zones(dt: float) -> void:
 					e.position += (z.p - e.position).normalized() * float(st.pull) * dt
 		if z.tt <= 0.0:
 			z.tt = z.tick
+			var forked := false
 			for e in enemies:
 				if not e.dead and e.position.distance_to(z.p) < z.r + e.r:
+					if not forked and String(st.get("name", "")) == "Storm Rod" and e.soak > 0.0:
+						forked = true
+						_storm_fork(e, z)
 					hit(e, z.dmg, z.el, z.src)
 					if st.get("soak", false):
 						e.soak = 3.5
+			if float(z.get("hurts_player", 0.0)) > 0.0 and player.position.distance_to(z.p) < z.r + player.r:
+				hurt(float(z.hurts_player))
 	zones = zones.filter(func(z): return z.t < z.life)
 
 
@@ -406,6 +432,9 @@ func hit(e, base: float, el: String, src: String, move := "") -> void:
 			m *= 1.0 + float(GameData.STANCES.brink_dmg)
 	if src == "player" and e.first_hit_t < 0.0:
 		e.first_hit_t = time
+	m *= _affinity(e, el, src)
+	if e.dead:
+		return
 	var a: Dictionary = ch.aspect
 	if src == "player":
 		if ch.el == "fire":
@@ -673,18 +702,51 @@ func chain_target(origin: Vector2, aim: Vector2, max_range: float):
 
 ## Carries out one spell aimed at `aim` (a world position). `src` is "player" or "ally".
 ## Returns false if it found nothing to hit (chains only; the ink is still spent).
-func perform(st: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
+## Phase 3: the ground changes some spells (puddles, stones, open ground), and each
+## spell has one hidden secret (SECRETS in game_data.gd).
+func perform(st_in: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
+	var st: Dictionary = st_in.duplicate()
 	var o = ally if src == "ally" else player
 	var origin: Vector2 = o.position
 	var col: Color = C[st.el]
-	var dir: Vector2 = (aim - origin).normalized() if aim.distance_to(origin) > 1.0 else o.facing
+	var dir: Vector2 = (aim - origin).normalized() if aim.distance_to(origin) > 1.0 else player.facing
 	var dmg: float = float(st.dmg) * mult
 	var tier: int = int(st.get("tier", 0))
+	var sname: String = String(st.get("name", ""))
+	var mine: bool = src == "player"
+	var T: Dictionary = GameData.TERRAIN
+	var in_puddle: bool = terrain.at(origin, "puddle") != null
+	var on_stone: bool = terrain.at(origin, "stone") != null
+	var on_open: bool = terrain.at(origin, "open") != null
+	if st.el == "water" and in_puddle and st.kind in ["bolt", "nova"]:
+		if st.kind == "bolt":
+			dmg *= float(T.puddle_grow)
+		else:
+			st.radius = float(st.radius) * float(T.puddle_grow)
+		_saw_terrain_if(mine, "puddle_grow")
+	if st.el == "wind" and on_open:
+		match st.kind:
+			"bolt":
+				st.life = float(st.get("life", 1.1)) * float(T.open_reach)
+			"zone":
+				st.range = float(st.range) * float(T.open_reach)
+			"dash":
+				st.dash_len = float(st.dash_len) * float(T.open_reach)
+		_saw_terrain_if(mine, "open_reach")
 	match st.kind:
 		"bolt":
 			var n := 5 if tier >= 2 else (3 if tier >= 1 else 1)
+			var spread := 0.17
+			if sname == "Tide Shot" and in_puddle and mine:
+				n += 2
+				spread = float(GameData.SECRETS["Tide Shot"].spread)
+				discovery.secret(sname)
+			if sname == "Stone Shard" and on_stone and mine:
+				st.pierce = int(st.get("pierce", 0)) + int(GameData.SECRETS["Stone Shard"].pierce)
+				dmg *= float(GameData.SECRETS["Stone Shard"].dmg)
+				discovery.secret(sname)
 			for k in n:
-				var ang := dir.angle() + (k - (n - 1) / 2.0) * 0.17
+				var ang := dir.angle() + (k - (n - 1) / 2.0) * spread
 				projectiles.append({
 					"p": origin, "v": Vector2.from_angle(ang) * float(st.speed), "life": float(st.get("life", 1.1)),
 					"dmg": dmg, "el": st.el, "src": src, "pierce": int(st.get("pierce", 0)),
@@ -696,6 +758,7 @@ func perform(st: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 				# The spark crackles out along the aim line and grounds itself.
 				chains.append({"a": origin, "b": origin + dir * minf(float(st.range), origin.distance_to(aim)), "t": 0.2, "col": col, "wide": false})
 				return false
+			var pool = terrain.at(target.position, "puddle")
 			var done: Array = []
 			var from_p := origin
 			var cur = target
@@ -707,8 +770,23 @@ func perform(st: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 				done.append(cur)
 				from_p = cur.position
 				cur = nearest(cur.position, 170.0, done)
+			if sname == "Spark" and mine and pool != null:
+				# Secret: in water, the spark finds everything standing in that puddle.
+				var any := false
+				for e in enemies:
+					if not e.dead and not done.has(e) and e.position.distance_to(pool.p) < pool.r + e.r:
+						chains.append({"a": target.position, "b": e.position, "t": 0.25, "col": col, "wide": false})
+						hit(e, dmg * 0.8, st.el, src)
+						any = true
+				if any or done.size() > 0:
+					discovery.secret(sname)
 		"nova":
 			var r: float = float(st.radius) * (1.0 + 0.25 * tier)
+			if sname == "Arc Nova" and in_puddle and mine:
+				r *= float(GameData.SECRETS["Arc Nova"].grow)
+				hurt(Game.max_hp() * float(GameData.SECRETS["Arc Nova"].self_dmg))
+				discovery.secret(sname)
+			var crash: bool = sname == "Undertow" and mine
 			var pulse := func():
 				var c: Vector2 = o.position
 				ring(c, 8, r, 0.4, col, 3)
@@ -716,22 +794,64 @@ func perform(st: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 					if not e.dead and c.distance_to(e.position) < r + e.r:
 						hit(e, dmg, st.el, src, String(st.get("move", "")))
 						_push_soak_slow(e, st, c)
+						if crash:
+							e.crash_t = float(GameData.SECRETS["Undertow"].window)
+							e.crash_dmg = dmg * float(GameData.SECRETS["Undertow"].dmg)
+				if st.el == "fire":
+					ignite_at(c, r)
 			pulse.call()
 			if tier >= 3:
 				delayed.append({"t": 0.35, "fn": pulse})
+			if sname == "Quake" and mine and _inside_own(origin, "Rampart"):
+				var Q: Dictionary = GameData.SECRETS["Quake"]
+				for k in int(Q.echoes):
+					delayed.append({"t": float(Q.gap) * (k + 1), "fn": pulse})
+				discovery.secret(sname)
+			if sname == "Flare Ring" and mine and player.heat >= 4:
+				var F: Dictionary = GameData.SECRETS["Flare Ring"]
+				_add_zone(o.position, r, float(F.dur), 0.5, dmg * float(F.dmg), {"el": "fire", "kind": "zone", "name": "Flare Ring fire"}, src)
+				discovery.secret(sname)
 		"zone":
 			var zp: Vector2 = origin + dir * minf(origin.distance_to(aim), float(st.range))
 			var zr: float = float(st.radius) * (1.0 + 0.15 * tier)
-			zones.append({
-				"p": zp, "r": zr, "life": float(st.dur) * (1.0 + 0.3 * tier), "t": 0.0,
-				"tick": float(st.get("tick", 0.5)), "tt": 0.0, "dmg": dmg, "st": st, "el": st.el, "src": src,
-			})
-			ring(zp, 4, zr, 0.35, col, 2)
+			var life: float = float(st.dur) * (1.0 + 0.3 * tier)
+			var z_extra := {}
+			if st.el == "water" and terrain.at(zp, "puddle") != null:
+				zr *= float(T.puddle_grow)
+				_saw_terrain_if(mine, "puddle_grow")
+				if sname == "Still Pool" and mine:
+					st.slow = float(GameData.SECRETS["Still Pool"].slow)
+					discovery.secret(sname)
+			if st.el == "earth" and terrain.at(zp, "stone") != null:
+				life *= float(T.stone_last)
+				_saw_terrain_if(mine, "stone_last")
+				if sname == "Rampart" and mine:
+					z_extra.wall = true
+					discovery.secret(sname)
+			if sname == "Vortex" and mine and terrain.at(zp, "open") != null:
+				z_extra.walk = float(GameData.SECRETS["Vortex"].speed)
+				life *= float(GameData.SECRETS["Vortex"].last)
+				discovery.secret(sname)
+			if sname == "Pyre" and mine:
+				for oz in zones:
+					if oz.src == "player" and String(oz.st.get("name", "")) == "Pyre" and oz.p.distance_to(zp) < oz.r:
+						# Secret: two pyres become one great fire.
+						oz.t = oz.life
+						zr *= float(GameData.SECRETS["Pyre"].grow)
+						life *= float(GameData.SECRETS["Pyre"].last)
+						zp = (zp + oz.p) / 2.0
+						discovery.secret(sname)
+						break
+			var z := _add_zone(zp, zr, life, float(st.get("tick", 0.5)), dmg, st, src)
+			z.merge(z_extra, true)
+			if st.el == "fire":
+				ignite_at(zp, zr)
 		"dash":
 			var end_p: Vector2 = origin + dir * float(st.dash_len)
 			if end_p.length() > GameData.WORLD_RADIUS - 15.0:
 				end_p = end_p.normalized() * (GameData.WORLD_RADIUS - 15.0)
 			var width := 34.0 + 10.0 * tier
+			var through := 0
 			for e in enemies:
 				if e.dead:
 					continue
@@ -739,13 +859,172 @@ func perform(st: Dictionary, aim: Vector2, src: String, mult: float) -> bool:
 				if e.position.distance_to(closest) < width + e.r:
 					hit(e, dmg, st.el, src, String(st.get("move", "")))
 					_push_soak_slow(e, {"push": 80.0}, closest)
+					through += 1
 			chains.append({"a": origin, "b": end_p, "t": 0.25, "col": col, "wide": true})
 			o.position = end_p
-			o.facing = dir
+			if mine:
+				player.facing = dir
 			if src == "player":
 				player.dodge_t = float(GameData.DODGE_TIME)
 			ring(end_p, 6, 60, 0.35, col, 2)
+			if sname == "Cyclone Step" and mine and through >= int(GameData.SECRETS["Cyclone Step"].count):
+				var CS: Dictionary = GameData.SECRETS["Cyclone Step"]
+				_add_zone(end_p, float(CS.radius), float(CS.dur), 0.5, dmg * 0.2, {"el": "wind", "kind": "zone", "name": "whirlwind", "pull": 110.0}, src)
+				discovery.secret(sname)
 	return true
+
+
+func _add_zone(p: Vector2, r: float, life: float, tick: float, dmg: float, st: Dictionary, src: String) -> Dictionary:
+	var z := {"p": p, "r": r, "life": life, "t": 0.0, "tick": tick, "tt": 0.0, "dmg": dmg, "st": st, "el": st.el, "src": src}
+	zones.append(z)
+	ring(p, 4, r, 0.35, C[st.el], 2)
+	return z
+
+
+func _inside_own(p: Vector2, spell: String) -> bool:
+	for z in zones:
+		if z.src == "player" and String(z.st.get("name", "")) == spell and z.p.distance_to(p) < z.r:
+			return true
+	return false
+
+
+func _saw_terrain_if(mine: bool, id: String) -> void:
+	if mine:
+		discovery.saw_terrain(id)
+
+
+# ================================================================ Terrain and secrets (Phase 3)
+
+## Fire touching dry grass sets the whole patch alight for a while.
+func ignite_at(p: Vector2, r: float) -> void:
+	var G: Dictionary = GameData.TERRAIN.grass_fire
+	for pt in terrain.overlapping(p, r, "grass"):
+		pt.burnt = float(G.regrow)
+		var z := _add_zone(pt.p, pt.r, float(G.dur), float(G.tick), float(G.dmg), {"el": "fire", "kind": "zone", "name": "grass fire"}, "world")
+		z.hurts_player = float(G.player_dmg)
+		z.start = pt.p
+		if player.position.distance_to(pt.p) < 500.0:
+			discovery.saw_terrain("grass_fire")
+
+
+## A wind spell passing through fire carries it along.
+func _wind_through_fire(p: Vector2, v: Vector2) -> void:
+	for z in zones:
+		if z.el == "fire" and p.distance_to(z.p) < z.r:
+			z.carry = v.normalized() * float(GameData.TERRAIN.wind_carry)
+			z.carry_t = float(GameData.TERRAIN.wind_carry_time)
+
+
+## Fire drifts with the breeze (and anything a wind spell gave it); a walking vortex
+## heads for the nearest enemy.
+func _move_zone(z: Dictionary, dt: float) -> void:
+	if z.el == "fire":
+		var breeze := Vector2.from_angle(time * 0.02) * float(GameData.TERRAIN.breeze)
+		var v: Vector2 = breeze
+		if float(z.get("carry_t", 0.0)) > 0.0:
+			z.carry_t = float(z.carry_t) - dt
+			v += z.carry
+		z.p += v * dt
+		if z.has("start") and z.p.distance_to(z.start) > 40.0 and player.position.distance_to(z.p) < 400.0:
+			discovery.saw_terrain("wind_carry")
+	if float(z.get("walk", 0.0)) > 0.0:
+		var e = nearest(z.p, 400.0)
+		if e != null:
+			z.p += (e.position - z.p).normalized() * float(z.walk) * dt
+
+
+## Puddles soak whatever wades through them.
+func _terrain_effects(_dt: float) -> void:
+	for e in enemies:
+		if e.dead:
+			continue
+		if terrain.at(e.position, "puddle") != null:
+			e.soak = maxf(e.soak, 1.0)
+			if e.position.distance_to(player.position) < 260.0 and player.dead_t <= 0.0:
+				discovery.saw_terrain("puddle_soak")
+
+
+## Secrets that depend on what a projectile hits (checked before the hit lands).
+func _secret_on_hit(e, st: Dictionary, src: String) -> void:
+	if src != "player":
+		return
+	var sname: String = String(st.get("name", ""))
+	if sname == "Ember Bolt" and e.soak > 0.0:
+		var S: Dictionary = GameData.SECRETS["Ember Bolt"]
+		_add_zone(e.position, float(S.radius), float(S.dur), 0.5, 0.0, {"el": "water", "kind": "zone", "name": "steam", "slow": float(S.slow)}, "player")
+		discovery.secret(sname)
+	elif sname == "Gust" and terrain.at(e.position, "puddle") != null:
+		var G: Dictionary = GameData.SECRETS["Gust"]
+		ring(e.position, 6, float(G.radius), 0.45, C.water, 2)
+		for o in enemies:
+			if not o.dead and o.position.distance_to(e.position) < float(G.radius):
+				o.soak = 3.5
+		discovery.secret(sname)
+
+
+## Storm Rod secret: a strike on a soaked enemy forks to every soaked enemy nearby.
+func _storm_fork(first, z: Dictionary) -> void:
+	var S: Dictionary = GameData.SECRETS["Storm Rod"]
+	for e in enemies:
+		if e != first and not e.dead and e.soak > 0.0 and e.position.distance_to(first.position) < float(S.range):
+			chains.append({"a": first.position, "b": e.position, "t": 0.25, "col": C.lightning, "wide": false})
+			hit(e, z.dmg * float(S.dmg), "lightning", z.src)
+	if z.src == "player":
+		discovery.secret("Storm Rod")
+
+
+## Undertow secret: an enemy thrown into another one makes both reel.
+func _crash(a, b) -> void:
+	var dmg: float = maxf(a.crash_dmg if a.crash_t > 0.0 else 0.0, b.crash_dmg if b.crash_t > 0.0 else 0.0)
+	a.crash_t = 0.0
+	b.crash_t = 0.0
+	for e in [a, b]:
+		e.state = "stagger"
+		e.state_t = float(GameData.SECRETS["Undertow"].stagger)
+		hit(e, dmg, "water", "player")
+	ring((a.position + b.position) / 2.0, 6, 40, 0.4, C.water, 2.5)
+	discovery.secret("Undertow")
+
+
+## Monster affinities: weak, resists, enraged or special. Returns the damage multiplier.
+## Everyone who sees a reaction (you hit it, or Mira did) counts toward learning it.
+func _affinity(e, el: String, src: String) -> float:
+	var r: Dictionary = discovery.reaction(e, el)
+	if r.is_empty() or src == "world":
+		return 1.0
+	discovery.saw_reaction(e, el)
+	match r.type:
+		"weak", "resists":
+			return float(r.mult)
+		"enraged":
+			e.enraged_t = float(r.time)
+			e.enrage_speed = float(r.speed)
+			return float(r.mult)
+		"special":
+			match r.effect:
+				"split":
+					if not e.split_done and e.hp / e.max_hp < float(r.below):
+						_split(e)
+				"guard_break":
+					e.state = "stagger"
+					e.state_t = float(r.stagger)
+					e.face = -e.face
+	return 1.0
+
+
+## Water splits a hurt Blot into two Inklings.
+func _split(e) -> void:
+	e.split_done = true
+	ring(e.position, 6, 40, 0.4, C.water, 2.5)
+	for k in 2:
+		var n = EnemyScript.new()
+		n.setup(self, 0, e.position + Vector2.from_angle(k * PI + randf()) * 18.0)
+		n.side = 1.0 if k == 0 else -1.0
+		n.aggro = true
+		n.xp = 0   # the Blot's own XP is enough
+		actors.add_child(n)
+		enemies.append(n)
+	kill(e, "world")
 
 
 ## A finished read (see casting.gd): the spell goes off at the aim point.
@@ -1022,9 +1301,9 @@ func on_hint(_text: String) -> void:
 	hud.stir_book_button()
 
 
-## Every margin note: hidden-chapter hints (and, from Phase 3, spell secrets).
+## Every margin note: hidden-chapter hints and spell secrets.
 func all_margins() -> Array:
-	return ch.aspect.margins.duplicate()
+	return ch.aspect.margins + ch.disc.margins
 
 
 func ring(p: Vector2, r0: float, r1: float, life: float, col: Color, w: float) -> void:
@@ -1126,13 +1405,41 @@ func _draw_over(d: Node2D) -> void:
 	_draw_nudge(d)
 
 
-## Ground patches (Phase 3 fills these in).
+## Ground patches, drawn in the same ink style as everything else.
 func terrain_patches_for_draw() -> Array:
-	return []
+	var view := _view_rect()
+	return terrain.patches.filter(func(pt): return view.grow(pt.r).has_point(pt.p))
 
 
-func _draw_patch(_d: Node2D, _pt: Dictionary) -> void:
-	pass
+func _draw_patch(d: Node2D, pt: Dictionary) -> void:
+	var p: Vector2 = pt.p
+	var r: float = pt.r
+	match pt.kind:
+		"grass":
+			var burnt: bool = pt.burnt > 0.0
+			var col: Color = Color(C.ink_soft, 0.5) if burnt else Color("b59a3c", 0.55)
+			for k in int(r / 3.0):
+				var a := k * 2.39996 + float(pt.sd)
+				var q: Vector2 = p + Vector2.from_angle(a) * r * sqrt(fmod(k * 0.618, 1.0))
+				var sway := sin(time * 1.5 + k) * 1.5
+				d.draw_line(q, q + Vector2(sway - 2.0, -7.0), col, 1.2)
+				d.draw_line(q + Vector2(2, 0), q + Vector2(sway + 3.0, -6.0), col, 1.2)
+		"puddle":
+			d.draw_colored_polygon(Ink.blob(p, r, float(pt.sd), 0.0), Color(C.water, 0.13))
+			d.draw_polyline(Ink.outline(Ink.blob(p, r, float(pt.sd), 0.0)), Color(C.water, 0.35), 1.2)
+			var k := fmod(time * 0.4 + float(pt.sd), 1.0)
+			d.draw_arc(p + Vector2(r * 0.2, -r * 0.1), r * 0.5 * k, 0, TAU, 24, Color(C.water, 0.3 * (1.0 - k)), 1.0)
+		"stone":
+			for k in int(r / 9.0):
+				var a := k * 2.39996 + float(pt.sd)
+				var q: Vector2 = p + Vector2.from_angle(a) * r * sqrt(fmod(k * 0.618 + 0.1, 1.0))
+				d.draw_colored_polygon(Ink.blob(q, 4.5 + fmod(k * 1.7, 3.0), float(k), 0.0), Color(C.ink_soft, 0.35))
+		"open":
+			d.draw_circle(p, r, Color(C.paper.lightened(0.4), 0.45))
+			for k in 3:
+				var y := (k - 1) * r * 0.4
+				var x := fmod(time * 20.0 + k * 37.0, r * 1.2) - r * 0.6
+				d.draw_line(p + Vector2(x - 12, y), p + Vector2(x + 12, y - 2), Color(C.wind, 0.3), 1.2)
 
 
 func _draw_campfire(d: Node2D, f: Vector2) -> void:

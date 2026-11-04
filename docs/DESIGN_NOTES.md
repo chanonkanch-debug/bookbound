@@ -229,3 +229,62 @@ ink to write, and shows all margin notes. An awakened hidden chapter now shows a
   Phase 1) and planting your feet blocks 50% of damage (`STANCES.planted_guard`, was 30%). The bot now
   takes about 4 to 15 minutes to reach the ceremony depending on style (jabbing styles fastest, dodging
   and planting slowest).
+
+## Phase 3: Learning by experimenting
+
+Nothing here is explained. The world reacts, and the journal and margins write down what you saw.
+All numbers and lines are in the "Phase 3" block of `scripts/data/game_data.gd`. Rules live in
+`world/terrain.gd` and `world/discovery.gd`; `world.gd` only calls them and draws.
+
+### Monster affinities (`AFFINITIES`, `DISCOVERY`)
+Every monster has at least two reactions to elements:
+
+| Monster | Weak (×1.3) | Resists (×0.75) | Other |
+|---|---|---|---|
+| Inkling | fire | water | wind enrages it: faster for 4 s, but takes ×1.25 |
+| Blot | fire | earth | water splits it into two Inklings once it's below 60% health |
+| Smudge Knight | lightning | fire | earth breaks its guard (stagger 1.4 s, turns it); wind enrages it for 3 s |
+
+A reaction counts as "seen" every time it happens, from your spells or Mira's. After
+`DISCOVERY.affinity_seen` sightings (4) the journal writes a line, and the bestiary section of the journal
+lists it from then on.
+
+### Terrain (`TERRAIN`, `TERRAIN_LINES`)
+The field has fixed patches (same layout every game, `TERRAIN.seed`) so they can be learned:
+- **Dry grass** (Inkling Fields): fire sets it alight. It burns as a fire zone for 6 s that hurts monsters
+  and, lightly, you; burnt grass regrows after 90 s.
+- **Puddles** (Blot Marsh): anything standing in one is soaked; water zones placed on one grow ×1.4.
+- **Stones** (Knight's Reach): earth zones placed on stones last twice as long.
+- **Open ground** (all regions): wind spells cast from it reach ×1.5 further.
+- **Wind carries fire**: a wind spell passing through a fire zone carries it along, and a gentle breeze
+  slowly drifts all fire zones.
+Each writes a journal line the first time you see it.
+
+### Spell secrets (`SECRETS`)
+Each of the 15 spells has one hidden behavior (listed with conditions in F1, and in the `SECRETS` table).
+The first time it happens, a short line is written into the book's margins next to the hidden-chapter
+hints. These are separate from hidden chapters: smaller, always on, and nothing is "awakened".
+
+### Mira teaches by example (`MIRA_TEACH`)
+Mira picks targets by distance, plus a bonus for hitting a monster with an element whose reaction you
+haven't learned yet, for soaking monsters near you when you have a secret that needs wet targets, and for
+hitting monsters in puddles. She never says anything about it.
+
+### Saves
+`save_version` is now 3. Migration from 1 or 2 adds an empty `disc` (discoveries) record and keeps
+everything else.
+
+### Balance with affinities
+Affinities deliberately make some elements better against some monsters, so the "every element within
+±20% in every region" goal now holds only roughly. The bot doesn't use terrain or secrets on purpose,
+so its numbers are what a player who ignores them would see. In the Phase 3 run (6 runs per book),
+37 of 45 cells were within ±20% and the widest gap was 28% (wind medium/thick are fast in Blot Marsh;
+earth thin is slow there because Blots resist earth). Fights last a median 8 to 73 s depending on book and
+region. Full table in the Phase 3 report.
+
+### Deferred or not quite right yet (Phase 3)
+- Terrain patches are drawn as soft ink stains; they are readable but not pretty. New art was out of scope.
+- The balance bot doesn't play around affinities (it never switches book to suit a region), so
+  regions where your element is weak or resisted are slower for it than they would be for a curious player.
+- Some secrets (Quake inside Rampart, Pyre on Pyre) need deliberate setup, and are likely to be found late
+  or by reading F1.

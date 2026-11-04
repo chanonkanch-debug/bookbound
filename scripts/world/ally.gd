@@ -34,8 +34,21 @@ func tick(dt: float) -> void:
 	queue_redraw()
 
 
+## Mira teaches by example (Phase 3): she prefers a target that would show the player a
+## reaction or secret they haven't found yet (MIRA_TEACH in game_data.gd). She never says so.
 func try_cast() -> bool:
-	var t = w.nearest(position, 300.0)
+	var t = null
+	var best := -INF
+	for e in w.enemies:
+		if e.dead:
+			continue
+		var d: float = position.distance_to(e.position)
+		if d > 300.0:
+			continue
+		var score: float = -d + w.discovery.mira_bonus(e, el)
+		if score > best:
+			best = score
+			t = e
 	if t == null:
 		return false
 	var dmg := 12.0 + 3.0 * int(w.ch.level)
