@@ -43,7 +43,7 @@ func _ready() -> void:
 	buttons.add_theme_constant_override("v_separation", 6)
 	v.add_child(buttons)
 	buttons.add_child(_button("Complete the trigger", func(): w.dev_complete_trigger()))
-	buttons.add_child(_button("Gain a level (rest to write it)", func(): w.gain_xp(Game.xp_next(Game.pending_level(w.ch)) - Game.xp_into_level(w.ch))))
+	buttons.add_child(_button("Gain a level (rest to write it)", func(): w.ch.xp += Game.xp_next(Game.pending_level(w.ch)) - Game.xp_into_level(w.ch)))
 	buttons.add_child(_button("Rest now", func(): w.finish_rest()))
 	buttons.add_child(_button("Unlock all UI", func(): w.unlock_all_ui()))
 	numbers_btn = _button("", _toggle_numbers)
@@ -121,6 +121,7 @@ func _refresh() -> void:
 			var st: Dictionary = Game.bare_stats(i)
 			s += "%d · %s · %d dmg · %d ink · read %.2fs · honed +%d%%\n" % [i + 1, st.name, roundi(st.dmg), roundi(st.mana), float(st.read), roundi(100.0 * float(st.mastery))]
 	s += _hidden_chapter() if Game.has_book() else _lean()
+	s += _polish()
 	if w.get("discovery") != null:
 		s += w.discovery.designer_text()
 	if w.get("hands") != null:
@@ -139,6 +140,34 @@ func _hidden_chapter() -> String:
 		as_.name, as_.effect, soft, w.chapter.trigger_text(),
 		soft, a.progress, a.need, a.stage, " · awakened" if a.awakened else "",
 		soft, w.chapter.act_text(), soft, "yes" if w.chapter.act_met() else "no"]
+
+
+## The Unwritten, Phase 1: pacing, feel and the queues that keep things one at a time.
+func _polish() -> String:
+	var ch: Dictionary = w.ch
+	var soft: String = C.ink_soft.to_html(false)
+	var out := _sec("Pacing and feel")
+	if not Game.has_book():
+		out += "bare-hands XP x%.2f (BARE_XP_MULT) · lines waiting for the first kill: %d\n" % [float(GameData.BARE_XP_MULT), w.early_lines.size()]
+	else:
+		out += "chapter hints: earned %d, shown %d · next hint may show in %.0fs\n" % [w.chapter.earned_stage(), int(ch.aspect.stage), w.chapter.hint_gap]
+	out += "whispers waiting: %d · splatters %d / %d · region %s\n" % [
+		w.hud.whisper_queue.size(), w.splats.size(), int(GameData.FEEL.splat_max),
+		GameData.REGIONS[w.region].name if w.region >= 0 and w.region < GameData.REGIONS.size() else "?"]
+	var bored := 0
+	for e in w.enemies:
+		if is_instance_valid(e) and e.bored > 0.0:
+			bored += 1
+	out += "monsters giving up at the Hearth: %d · safe to rest: %s · fire calling: %s\n" % [
+		bored, "yes" if w.can_rest() else "no", "yes" if Game.pending_level(ch) > int(ch.level) else "no"]
+	var nud: Array = []
+	for k in GameData.NUDGES:
+		nud.append("%s %s" % [k, "✓" if ch.nudged.get(k, false) else "·"])
+	out += "nudges shown: %s\n" % ", ".join(nud)
+	out += "[color=#%s]settings[/color]  hit-pause %s · shake %s · UI size %.2f · hit-pause now %.2fs · shake now %.2fs\n" % [
+		soft, "on" if Game.settings.get("hitstop", true) else "off", "on" if Game.settings.get("shake", false) else "off",
+		float(Game.settings.get("ui_scale", 1.0)), w.hitstop, w.shake_t]
+	return out
 
 
 ## Before the ceremony: playstyle signals and the current book odds.

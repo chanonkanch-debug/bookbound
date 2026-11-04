@@ -92,6 +92,8 @@ func _ready() -> void:
 	right.add_child(_label("Nobody is born with a book. You'll fight with your bare hands until one is ready for you at the Hearth.", 15, C.ink, true))
 	right.add_child(_label("Which book is up to chance, but books are said to notice how you fight.", 15, C.ink_soft, true))
 
+	begin.focus_mode = Control.FOCUS_ALL
+	continue_btn.focus_mode = Control.FOCUS_ALL
 	saved = Game.load_game()
 	if not saved.is_empty():
 		var what := "bare hands"
@@ -99,14 +101,16 @@ func _ready() -> void:
 			what = GameData.ELEMENTS[saved.el].name
 		continue_btn.text = "Continue as %s (%s)" % [saved.name, what]
 		continue_btn.visible = true
+	# A gamepad starts on the main button (Continue if there's a save).
+	(continue_btn if continue_btn.visible else begin).call_deferred("grab_focus")
 
 
-func _label(text: String, size: int, col: Color, wrap := false) -> Label:
+func _label(text: String, font_size: int, col: Color, wraps := false) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", col)
-	if wrap:
+	if wraps:
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return l
 

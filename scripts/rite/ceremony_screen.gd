@@ -69,14 +69,15 @@ func _ready() -> void:
 	enter_btn.visible = false
 	enter_btn.pressed.connect(func(): enter_world.emit())
 	right.add_child(enter_btn)
+	open_btn.call_deferred("grab_focus")   # so a gamepad can press A
 
 
-func _label(text: String, size: int, col: Color, wrap := false) -> Label:
+func _label(text: String, font_size: int, col: Color, wraps := false) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", col)
-	if wrap:
+	if wraps:
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return l
 
@@ -87,7 +88,7 @@ func _intro_text() -> String:
 	var top := Game.top_lean(ch)
 	if top != "":
 		var lines: Array = GameData.LEAN_HINTS[top]
-		t += "\n\nIt seems to know you already. " + String(lines[0])
+		t += "\n\n%s \u201c%s\u201d" % [GameData.BOOK_TEXT.ceremony_knows, String(lines[0])]
 	t += "\n\nWhatever is inside, it will be yours for life."
 	return t
 
@@ -122,13 +123,15 @@ func _reveal() -> void:
 	for s in p.spells:
 		names.append(GameData.SPELLS[p.el][s.i].name)
 	var soft: String = C.ink_soft.to_html(false)
-	traits.text = "[color=#%s]BINDING[/color]\n[b]%s[/b] · %s\n[color=#%s]%s[/color]\n\n[color=#%s]THICKNESS[/color]\n[b]%s[/b]\n[color=#%s]%s[/color]\n\n[color=#%s]SPELLS[/color]\n%s" % [
-		soft, e.name, e.verb, soft, e.passive,
-		soft, t.name, soft, t.trade,
-		soft, ", ".join(names),
+	var heads: Array = GameData.BOOK_TEXT.ceremony_heads
+	traits.text = "[color=#%s]%s[/color]\n[b]%s[/b] · %s\n[color=#%s]%s[/color]\n\n[color=#%s]%s[/color]\n[b]%s[/b]\n[color=#%s]%s[/color]\n\n[color=#%s]%s[/color]\n%s" % [
+		soft, heads[0], e.name, e.verb, soft, e.passive,
+		soft, heads[1], t.name, soft, t.trade,
+		soft, heads[2], ", ".join(names),
 	]
 	if int(p.ink) > 0:
-		traits.text += "\n\n[color=#%s]The ink you gathered bare-handed is waiting. Rest, and write it into your pages.[/color]" % soft
+		traits.text += "\n\n[color=#%s]%s[/color]" % [soft, GameData.BOOK_TEXT.ceremony_ink]
 	traits.visible = true
 	enter_btn.visible = true
 	open_btn.visible = false
+	enter_btn.grab_focus()

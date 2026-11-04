@@ -2,7 +2,10 @@ extends CanvasLayer
 ## A hand-drawn map (press M once you have one). Appears only after you find a
 ## map scrap or have walked all three regions. No numbers, just ink.
 
+const UiTheme := preload("res://scripts/ui/ui_theme.gd")
+
 var w
+var ui_root: Control
 var C: Dictionary = GameData.COLORS
 var canvas: Control
 
@@ -34,7 +37,8 @@ class MapCanvas extends Control:
 func _ready() -> void:
 	layer = 10
 	visible = false
-	var root := Control.new()
+	ui_root = Control.new()
+	var root := ui_root
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(root)
 	var dim := ColorRect.new()
@@ -45,6 +49,7 @@ func _ready() -> void:
 	canvas.w = w
 	canvas.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(canvas)
+	UiTheme.fit(self, ui_root)
 
 
 func open() -> void:

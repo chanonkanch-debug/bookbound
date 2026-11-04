@@ -49,6 +49,7 @@ var crash_t := 0.0           # Undertow secret: thrown, and will crash into the 
 var crash_dmg := 0.0
 var crash_kind := ""         # "undertow" (spell secret) or "tangle" (hand secret)
 var split_done := false
+var bored := 0.0             # seconds spent hunting someone who is safe inside the Hearth
 
 
 func setup(world, t: int, pos: Vector2) -> void:
@@ -97,8 +98,18 @@ func tick(dt: float) -> void:
 	var to_p: Vector2 = w.lure_for(self) - position
 	var d := to_p.length()
 	var target_alive: bool = p.dead_t <= 0.0
-	if d < 330.0 and target_alive:
+	if d < 330.0 and target_alive and bored <= float(GameData.MONSTERS.hearth_give_up):
 		aggro = true
+	# Nothing can enter the Hearth. A monster left pacing at its edge gives up after a while
+	# and wanders off, instead of waiting there for you forever.
+	if p.position.length() < GameData.TOWN_RADIUS:
+		if aggro or bored > 0.0:
+			bored += dt
+		if aggro and bored > float(GameData.MONSTERS.hearth_give_up):
+			aggro = false
+			wander = position.angle()
+	else:
+		bored = 0.0
 	if d > 700.0 or not target_alive:
 		aggro = false
 		if state != "hunt" and state != "recover":
@@ -237,8 +248,8 @@ func _draw() -> void:
 	if state == "windup":
 		match behavior:
 			"charge":
-				var len := float(f.charge_speed) * float(f.charge_time)
-				draw_line(Vector2.ZERO, lunge * len, Color(C.danger, 0.12 + 0.25 * k), r * 1.6)
+				var length := float(f.charge_speed) * float(f.charge_time)
+				draw_line(Vector2.ZERO, lunge * length, Color(C.danger, 0.12 + 0.25 * k), r * 1.6)
 			"guard":
 				var reach: float = r + float(f.reach) + 12.0
 				var a0 := face.angle() - float(f.arc) / 2.0
@@ -248,6 +259,10 @@ func _draw() -> void:
 				draw_colored_polygon(pts, Color(C.danger, 0.08 + 0.22 * k))
 			_:
 				draw_arc(Vector2.ZERO, r + float(f.reach), 0, TAU, 32, Color(C.danger, 0.1 + 0.3 * k), 1.5)
+		# Every wind-up: a ring that closes in on the monster. When it touches, the blow lands.
+		# Its size (not its colour) says how long you have, so it reads in a crowd.
+		var closing: float = r * swell + 3.0 + float(GameData.READABILITY.windup_ring) * (1.0 - k)
+		draw_arc(lean, closing, 0, TAU, 32, Color(C.danger, 0.35 + 0.55 * k), 1.5 + 2.0 * k)
 	draw_colored_polygon(Ink.blob(lean, r * swell, sd, w.time * (1.0 + 2.0 * k)), body)
 	if tier == 2:
 		draw_polyline(Ink.outline(Ink.blob(lean, r * swell + 3.0, sd, w.time)), C.danger, 2.0)

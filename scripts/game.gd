@@ -44,15 +44,21 @@ func show_numbers() -> bool:
 ## your version wins and this is skipped.
 func _setup_input() -> void:
 	var map := {
-		"move_up": [_key(KEY_W), _key(KEY_UP)], "move_down": [_key(KEY_S), _key(KEY_DOWN)],
-		"move_left": [_key(KEY_A), _key(KEY_LEFT)], "move_right": [_key(KEY_D), _key(KEY_RIGHT)],
+		"move_up": [_key(KEY_W), _key(KEY_UP), _axis(JOY_AXIS_LEFT_Y, -1.0)], "move_down": [_key(KEY_S), _key(KEY_DOWN), _axis(JOY_AXIS_LEFT_Y, 1.0)],
+		"move_left": [_key(KEY_A), _key(KEY_LEFT), _axis(JOY_AXIS_LEFT_X, -1.0)], "move_right": [_key(KEY_D), _key(KEY_RIGHT), _axis(JOY_AXIS_LEFT_X, 1.0)],
+		# Gamepad aiming with the right stick (the mouse aims on a computer).
+		"aim_up": [_axis(JOY_AXIS_RIGHT_Y, -1.0)], "aim_down": [_axis(JOY_AXIS_RIGHT_Y, 1.0)],
+		"aim_left": [_axis(JOY_AXIS_RIGHT_X, -1.0)], "aim_right": [_axis(JOY_AXIS_RIGHT_X, 1.0)],
+		"last_page_pad": [_axis(JOY_AXIS_TRIGGER_LEFT, 1.0)],
 		"page_1": [_key(KEY_1)], "page_2": [_key(KEY_2)], "page_3": [_key(KEY_3)], "cast_4": [_key(KEY_4)],
 		"page_5": [_key(KEY_5)], "page_6": [_key(KEY_6)],
 		"page_prev": [_key(KEY_Q), _mouse(MOUSE_BUTTON_WHEEL_UP), _pad(JOY_BUTTON_LEFT_SHOULDER)],
 		"page_next": [_key(KEY_E), _mouse(MOUSE_BUTTON_WHEEL_DOWN), _pad(JOY_BUTTON_RIGHT_SHOULDER)],
 		"read": [_key(KEY_SPACE), _mouse(MOUSE_BUTTON_RIGHT), _pad(JOY_BUTTON_A)],
-		"rest": [_key(KEY_R), _pad(JOY_BUTTON_Y)], "journal": [_key(KEY_J)], "map": [_key(KEY_M)],
-		"open_book": [_key(KEY_B)], "designer_view": [_key(KEY_F1)],
+		"rest": [_key(KEY_R), _pad(JOY_BUTTON_Y)],
+		"journal": [_key(KEY_J), _pad(JOY_BUTTON_DPAD_UP)], "map": [_key(KEY_M), _pad(JOY_BUTTON_DPAD_DOWN)],
+		"open_book": [_key(KEY_B), _pad(JOY_BUTTON_BACK)], "designer_view": [_key(KEY_F1)],
+		"pause": [_key(KEY_ESCAPE), _pad(JOY_BUTTON_START)],
 	}
 	for action in map:
 		if InputMap.has_action(action):
@@ -74,6 +80,13 @@ func _mouse(b: MouseButton) -> InputEvent:
 	return ev
 
 
+func _axis(a: JoyAxis, dir: float) -> InputEvent:
+	var ev := InputEventJoypadMotion.new()
+	ev.axis = a
+	ev.axis_value = dir
+	return ev
+
+
 func _pad(b: JoyButton) -> InputEvent:
 	var ev := InputEventJoypadButton.new()
 	ev.button_index = b
@@ -90,9 +103,9 @@ const ELS := ["fire", "water", "earth", "wind", "lightning"]
 ## "temper" is the hidden temperament (see LEAN in game_data.gd).
 func new_character(char_name: String, bg: String) -> Dictionary:
 	var temper := {}
-	var tr: Array = GameData.LEAN.temperament
+	var t_range: Array = GameData.LEAN.temperament
 	for k in ELS:
-		temper[k] = randf_range(tr[0], tr[1])
+		temper[k] = randf_range(t_range[0], t_range[1])
 	return {
 		"name": char_name if char_name != "" else "Arin", "bg": bg,
 		"el": "", "thick": "", "pages": 0, "spells": [],

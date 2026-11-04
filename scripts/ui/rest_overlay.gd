@@ -10,6 +10,7 @@ signal finished
 const UiTheme := preload("res://scripts/ui/ui_theme.gd")
 
 var w
+var ui_root: Control
 var C: Dictionary = GameData.COLORS
 var veil: ColorRect
 var moment: Label
@@ -17,6 +18,7 @@ var pages_box: HBoxContainer
 var well: Control
 var done_btn: Button
 var writing := false
+var sel := 0          # the page picked with a gamepad or the arrow keys
 
 
 ## One spell page, drawn as lines of ink. More lines = more written into it.
@@ -25,6 +27,7 @@ class PageView extends Control:
 	var w
 	var slot := 0
 	var grow_t := 0.0
+	var picked := false   # chosen with a gamepad or the arrow keys
 	func _draw() -> void:
 		var C: Dictionary = GameData.COLORS
 		var ch: Dictionary = w.ch
@@ -33,6 +36,8 @@ class PageView extends Control:
 		var r := Rect2(Vector2(6, 6), size - Vector2(12, 12))
 		draw_rect(r, C.paper)
 		draw_rect(r, C.rule, false, 1.0)
+		if picked:
+			draw_rect(r.grow(3.0), C.gilt, false, 2.0)
 		var tier := int(int(s.lvl) / 4.0)
 		for k in tier:
 			draw_rect(r.grow(-4.0 - k * 4.0), C.gilt, false, 1.5)
@@ -48,8 +53,8 @@ class PageView extends Control:
 				var a := 1.0
 				if k == int(s.lvl) - 1 and grow_t > 0.0:
 					a = 1.0 - grow_t
-				var len := r.size.x - 40.0 - float((k * 37) % 30)
-				draw_line(Vector2(26, y), Vector2(26 + len * a, y), Color(col, 0.85), 2.0)
+				var length := r.size.x - 40.0 - float((k * 37) % 30)
+				draw_line(Vector2(26, y), Vector2(26 + length * a, y), Color(col, 0.85), 2.0)
 			else:
 				draw_line(Vector2(26, y), Vector2(r.size.x - 14, y), Color(C.rule, 0.5), 1.0)
 
@@ -70,7 +75,8 @@ class Well extends Control:
 func _ready() -> void:
 	layer = 11
 	visible = false
-	var root := Control.new()
+	ui_root = Control.new()
+	var root := ui_root
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.theme = UiTheme.make()
 	add_child(root)
@@ -109,6 +115,7 @@ func _ready() -> void:
 	done_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	done_btn.pressed.connect(close)
 	v.add_child(done_btn)
+	UiTheme.fit(self, ui_root)
 
 
 ## Shows the end of a rest. `levels` is how many levels were just written.
@@ -151,6 +158,8 @@ func _open_pages() -> void:
 	pages_box.visible = true
 	well.visible = true
 	done_btn.visible = true
+	sel = 0
+	_pick(0)
 	veil.color.a = 0.6
 
 
@@ -169,6 +178,31 @@ func write_into(i: int) -> void:
 				var tw := pv.create_tween()
 				tw.tween_method(func(_x): pv.queue_redraw(), 0.0, 1.0, 0.6)
 		well.queue_redraw()
+
+
+## Gamepad and keys: left/right (or the page keys) choose a page, A / Enter writes into it,
+## B / Esc closes the book.
+func _process(_dt: float) -> void:
+	if not visible or not writing:
+		return
+	if Input.is_action_just_pressed("ui_left") or Input.is_action_just_pressed("page_prev"):
+		_pick(-1)
+	elif Input.is_action_just_pressed("ui_right") or Input.is_action_just_pressed("page_next"):
+		_pick(1)
+	elif Input.is_action_just_pressed("ui_accept") or Input.is_action_just_pressed("read"):
+		write_into(sel)
+	elif Input.is_action_just_pressed("ui_cancel") or Input.is_action_just_pressed("pause"):
+		close()
+
+
+func _pick(step: int) -> void:
+	var n: int = pages_box.get_child_count()
+	if n == 0:
+		return
+	sel = clampi(sel + step, 0, n - 1)
+	for pv in pages_box.get_children():
+		pv.picked = pv.slot == sel
+		pv.queue_redraw()
 
 
 func close() -> void:

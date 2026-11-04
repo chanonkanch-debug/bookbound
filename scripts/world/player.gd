@@ -120,8 +120,15 @@ func _draw() -> void:
 	if dodge_t > 0.0:
 		draw_arc(Vector2.ZERO, r + 4.0, 0, TAU, 24, Color(C.paper, 0.8), 2.0)
 	if bound:
-		draw_rect(Rect2(11, -6, 9, 12), C.ink)       # your book
-		draw_rect(Rect2(11, -6, 2, 12), el_c)
+		var cs = w.casting
+		var cost: float = cs.page_cost()
+		if mana < cost and not cs.reading:
+			# Too little ink for the open page: the book in your hand goes hollow, edged red.
+			draw_rect(Rect2(11, -6, 9, 12), C.paper)
+			draw_rect(Rect2(11, -6, 9, 12), C.danger, false, 1.5)
+		else:
+			draw_rect(Rect2(11, -6, 9, 12), C.ink)       # your book
+			draw_rect(Rect2(11, -6, 2, 12), el_c)
 	else:
 		# A bare fist, tinted toward the element your fighting leans to.
 		var fist: Color = C.ink

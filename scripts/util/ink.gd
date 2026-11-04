@@ -38,13 +38,13 @@ static func dashed_circle(d: CanvasItem, c: Vector2, r: float, col: Color, w: fl
 
 
 static func dashed_line(d: CanvasItem, a: Vector2, b: Vector2, col: Color, w: float, dash := 10.0) -> void:
-	var len := a.distance_to(b)
-	if len < 1.0:
+	var length := a.distance_to(b)
+	if length < 1.0:
 		return
-	var dir := (b - a) / len
+	var dir := (b - a) / length
 	var x := 0.0
-	while x < len:
-		d.draw_line(a + dir * x, a + dir * minf(len, x + dash * 0.6), col, w)
+	while x < length:
+		d.draw_line(a + dir * x, a + dir * minf(length, x + dash * 0.6), col, w)
 		x += dash
 
 

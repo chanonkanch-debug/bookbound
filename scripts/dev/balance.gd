@@ -9,8 +9,11 @@ extends Node
 ## Part 3 (`--chapters`): how fast each hidden-chapter trigger progresses, to check the
 ##   chapters still unlock in about the same play time.
 ##
+## Part 4 (`--only=firsthour`): the new-player bot (scripts/dev/first_hour.gd), a timeline of
+##   what a newcomer sees in their first hour. docs/FIRST_HOUR.md is written from it.
+##
 ## Options: `--runs=N` runs per case (default 3), `--signals` shows raw playstyle signals,
-## `--only=books` / `--only=bare` / `--only=chapters` runs one part.
+## `--only=books` / `--only=bare` / `--only=chapters` / `--only=firsthour` runs one part.
 
 const World := preload("res://scripts/world/world.gd")
 const DT := 1.0 / 30.0
@@ -63,6 +66,12 @@ func run() -> void:
 		await _book_part(runs)
 	if only == "chapters" or "--chapters" in OS.get_cmdline_user_args():
 		await _chapter_part()
+	if only == "firsthour":
+		# Part 4 (The Unwritten, Phase 1): the new-player bot, same as `-- --firsthour`.
+		var fh = load("res://scripts/dev/first_hour.gd").new()
+		add_child(fh)
+		await fh.run_first_hour()
+		fh.queue_free()
 	print("\n=== done ===")
 
 
@@ -367,7 +376,7 @@ func _book_part(runs: int) -> void:
 		var s := 0.0
 		for x in fl:
 			s += x / fl.size()
-		print("Fight length in %s: median %ds, average %ds (%d fights)" % [REGION_TESTS[ri].name, roundi(fl[fl.size() / 2]), roundi(s), fl.size()])
+		print("Fight length in %s: median %ds, average %ds (%d fights)" % [REGION_TESTS[ri].name, roundi(fl[int(fl.size() / 2.0)]), roundi(s), fl.size()])
 
 
 ## One run: a character with this book at the region's level, fighting there

@@ -5,6 +5,7 @@ extends RefCounted
 ## In the online version, this whole file runs on the server only.
 
 var w
+var hint_gap := 0.0     # seconds before the next margin hint may appear (not saved)
 
 
 func _init(world) -> void:
@@ -20,13 +21,37 @@ func progress() -> void:
 	if a.awakened:
 		return
 	a.progress = mini(int(a.need), int(a.progress) + 1)
-	var stage := mini(4, int(floor(float(a.progress) / float(a.need) * 4.0)))
-	while int(a.stage) < stage:
-		a.stage = int(a.stage) + 1
-		var hint: String = GameData.FINAL_HINT if a.stage >= 4 else GameData.ASPECTS[a.id].hints[a.stage - 1]
-		a.margins.append(hint)
-		w.on_hint(hint)
-		Game.save_game()
+
+
+## The stage the progress has earned (0..4). Hints are revealed one at a time, at least
+## CHAPTER_TUNING.hint_gap seconds apart, so a fast trigger never dumps every hint at once.
+func earned_stage() -> int:
+	var a := aspect()
+	return mini(4, int(floor(float(a.progress) / maxf(1.0, float(a.need)) * 4.0)))
+
+
+func tick(dt: float) -> void:
+	hint_gap = maxf(0.0, hint_gap - dt)
+	var a := aspect()
+	if a.id == "" or a.awakened or hint_gap > 0.0 or int(a.stage) >= earned_stage():
+		return
+	_next_hint()
+	hint_gap = float(GameData.CHAPTER_TUNING.hint_gap)
+
+
+func _next_hint() -> void:
+	var a := aspect()
+	a.stage = int(a.stage) + 1
+	var hint: String = GameData.FINAL_HINT if a.stage >= 4 else GameData.ASPECTS[a.id].hints[a.stage - 1]
+	a.margins.append(hint)
+	w.on_hint(hint)
+	Game.save_game()
+
+
+## Designer tool: reveal every earned hint right away.
+func flush_hints() -> void:
+	while int(aspect().stage) < earned_stage():
+		_next_hint()
 
 
 # ---- Triggers (called by the world)

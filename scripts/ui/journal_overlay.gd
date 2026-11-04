@@ -6,6 +6,7 @@ extends CanvasLayer
 const UiTheme := preload("res://scripts/ui/ui_theme.gd")
 
 var w
+var ui_root: Control
 var C: Dictionary = GameData.COLORS
 var list: VBoxContainer
 var beasts: VBoxContainer
@@ -17,7 +18,8 @@ var new_armed := false
 func _ready() -> void:
 	layer = 10
 	visible = false
-	var root := Control.new()
+	ui_root = Control.new()
+	var root := ui_root
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.theme = UiTheme.make()
 	add_child(root)
@@ -59,20 +61,21 @@ func _ready() -> void:
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(sp)
-	var close := Button.new()
-	close.text = "Close the journal"
-	close.theme_type_variation = "PrimaryButton"
-	close.focus_mode = Control.FOCUS_NONE
-	close.pressed.connect(close_journal)
-	row.add_child(close)
+	var close_btn := Button.new()
+	close_btn.text = "Close the journal"
+	close_btn.theme_type_variation = "PrimaryButton"
+	close_btn.focus_mode = Control.FOCUS_NONE
+	close_btn.pressed.connect(close_journal)
+	row.add_child(close_btn)
 	v.add_child(row)
+	UiTheme.fit(self, ui_root)
 
 
-func _label(text: String, size: int, col: Color) -> Label:
+func _label(text: String, font_size: int, col: Color) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", col)
 	return l
 
